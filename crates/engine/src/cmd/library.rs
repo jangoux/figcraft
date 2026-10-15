@@ -152,7 +152,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "library.aliasVariable",
             "Alias library variable",
-            "{library, alias (id or name of a published variable of the same type), variable (a local variable), mode? (default first)}  copies the library variable in (linked, read-only) and makes the local variable's value an alias of it",
+            "{library, alias (id or name of a published variable of the same type), variable (a local variable), mode? (default first), opacity? (colours: as variable.set's)}  copies the library variable in (linked, read-only) and makes the local variable's value an alias of it",
             true,
             alias
         ),
@@ -239,7 +239,8 @@ fn alias(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(cmd, "the library variable has another type"));
     }
     let local = import_variable(s, &lib, &key)?;
-    super::styles::var_set(s, &with(p, &["variable", "mode"], json!({"value": {"alias": local}})))?;
+    let opacity = p.get("opacity").cloned().unwrap_or(Value::Null);
+    super::styles::var_set(s, &with(p, &["variable", "mode"], json!({"value": {"alias": local, "opacity": opacity}})))?;
     Ok(json!({"variable": local}))
 }
 

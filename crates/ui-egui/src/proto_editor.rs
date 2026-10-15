@@ -540,7 +540,7 @@ fn literal_field(ui: &mut Ui, id: Id, cur: &VariableValue, w: f32) -> Option<Var
                 .map(VariableValue::Color)
         }
         VariableValue::String(s) => widgets::text_field(ui, id, s, w, tr("Text")).filter(|n| n != s).map(VariableValue::String),
-        VariableValue::Alias(_) => None,
+        VariableValue::Alias(_) | VariableValue::AliasOpacity { .. } => None,
     }
 }
 

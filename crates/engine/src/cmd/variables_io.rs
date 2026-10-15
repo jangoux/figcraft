@@ -65,7 +65,7 @@ fn css_safe(text: &str) -> String {
 
 /// Each collection's variables as custom properties (named as generated code names them): the
 /// default mode's values on `:root`, every other mode's on `[data-<collection>="<mode>"]`;
-/// aliases are `var(--name)`.
+/// aliases are `var(--name)`, and with an opacity `color-mix(in srgb, var(--name) 40%, transparent)`.
 fn css(vars: &Variables, colls: &[&Collection]) -> String {
     let mut out = String::new();
     for c in colls {
@@ -83,6 +83,18 @@ fn css(vars: &Variables, colls: &[&Collection]) -> String {
                         Some(t) => format!("var({})", css_var_of(t)),
                         None => continue,
                     },
+                    Some(VariableValue::AliasOpacity { variable, opacity, opacity_variable }) => {
+                        let Some(t) = vars.get(variable) else { continue };
+                        let amount = match opacity_variable {
+                            // Opacity variables hold percentages.
+                            Some(o) => match vars.get(o) {
+                                Some(o) => format!("calc(var({}) * 1%)", css_var_of(o)),
+                                None => continue,
+                            },
+                            None => format!("{}%", trim_num((opacity * 100.0).clamp(0.0, 100.0))),
+                        };
+                        format!("color-mix(in srgb, var({}) {amount}, transparent)", css_var_of(t))
+                    }
                     None => continue,
                 };
                 out.push_str(&format!("  {}: {value};\n", css_var_of(v)));
@@ -185,6 +197,8 @@ fn import(s: &mut Session, p: &Value) -> Result<Value> {
                         }
                     }
                 }
+                // (The variables JSON has no aliases with an opacity.)
+                VariableValue::AliasOpacity { .. } => continue,
                 other => other.clone(),
             };
             if let Some(slot) = doc.variables.variables.iter_mut().find(|x| x.id == *local) {

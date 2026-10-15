@@ -10,7 +10,7 @@ use std::sync::Arc;
 use egui::{Align2, Color32, CornerRadius, Id, Pos2, Rect, Sense, Stroke, Ui, pos2, vec2};
 use figcraft_doc::{Collection, Document, ModeId, NodeId, PublishedLibrary, Variable, VariableId, VariableType, VariableValue, Variables};
 use figcraft_engine::library;
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::FigApp;
 use crate::a11y::Tip;
@@ -26,6 +26,8 @@ enum Target {
     Bind { ids: Vec<NodeId>, field: String },
     /// Make `variable`'s value in `mode` an alias of it.
     Alias { variable: VariableId, mode: ModeId },
+    /// Make it the opacity of the colour alias that is `variable`'s value in `mode`.
+    AliasOpacity { variable: VariableId, mode: ModeId },
     /// Use it in a prototype action (a set variable's variable, a condition's operand).
     Proto(crate::proto_editor::VarSlot),
     /// Bind it to `field` of the shared style `style`.
@@ -212,6 +214,22 @@ pub fn open_alias(ui: &Ui, variable: &str, mode: &str, kind: VariableType, at: P
     ui.data_mut(|d| d.insert_temp(picker_id(), Picker { target, kind: Some(kind), at }));
 }
 
+/// Open the picker at `at` for the number variable whose percentage the colour alias that is
+/// `variable`'s value in `mode` takes as its opacity.
+pub fn open_alias_opacity(ui: &Ui, variable: &str, mode: &str, at: Pos2) {
+    let target = Target::AliasOpacity { variable: variable.to_string(), mode: mode.to_string() };
+    ui.data_mut(|d| d.insert_temp(picker_id(), Picker { target, kind: Some(VariableType::Number), at }));
+}
+
+/// The opacity of alias `val` as a `variable.set` alias's `opacity` (null: none).
+pub fn opacity_json(val: Option<&VariableValue>) -> Value {
+    match val {
+        Some(VariableValue::AliasOpacity { opacity_variable: Some(o), .. }) => json!({"alias": o}),
+        Some(VariableValue::AliasOpacity { opacity, .. }) => json!(opacity),
+        _ => Value::Null,
+    }
+}
+
 /// Open the picker for `field` of `ids` under the pointer (from a section header button).
 pub fn open_at_pointer(ui: &Ui, ids: &[NodeId], field: &str, kind: VariableType) {
     let at = ui.input(|i| i.pointer.interact_pos()).unwrap_or_default();
@@ -375,10 +393,11 @@ pub fn picker(app: &mut FigApp, ctx: &egui::Context) {
     let (scope, own) = match &p.target {
         Target::Bind { ids, field } => (ids.first().and_then(|id| figcraft_engine::cmd::variables::field_scope(&doc, *id, field)), None),
         Target::Alias { variable, .. } => (None, doc.variables.get(variable)),
+        Target::AliasOpacity { .. } => (Some("OPACITY"), None),
         Target::Proto(_) | Target::Style { .. } => (None, None),
     };
-    // Prototypes and styles use this file's variables.
-    let local_only = matches!(p.target, Target::Proto(_) | Target::Style { .. });
+    // Prototypes, styles and alias opacities use this file's variables.
+    let local_only = matches!(p.target, Target::Proto(_) | Target::Style { .. } | Target::AliasOpacity { .. });
     let keep = |lib: Option<&PublishedLibrary>, v: &Variable| {
         p.kind.is_none_or(|k| v.kind == k)
             && !(local_only && lib.is_some())
@@ -446,13 +465,23 @@ pub fn picker(app: &mut FigApp, ctx: &egui::Context) {
         close = true;
     }
     if let Some(pick) = chosen {
+        // A new alias target keeps the opacity on top of the old one.
+        let current = |variable: &str, mode: &str| doc.variables.get(variable).and_then(|v| v.values.get(mode)).cloned();
         match (&p.target, &pick.library) {
             (Target::Bind { ids, field }, _) => bind(app, ids, field, &pick),
             (Target::Alias { variable, mode }, None) => {
-                app.run("variable.set", json!({"variable": variable, "mode": mode, "value": {"alias": pick.id}}));
+                let opacity = opacity_json(current(variable, mode).as_ref());
+                app.run("variable.set", json!({"variable": variable, "mode": mode, "value": {"alias": pick.id, "opacity": opacity}}));
             }
             (Target::Alias { variable, mode }, Some(lib)) => {
-                app.run("library.aliasVariable", json!({"library": lib, "alias": pick.id, "variable": variable, "mode": mode}));
+                let opacity = opacity_json(current(variable, mode).as_ref());
+                app.run("library.aliasVariable", json!({"library": lib, "alias": pick.id, "variable": variable, "mode": mode, "opacity": opacity}));
+            }
+            (Target::AliasOpacity { variable, mode }, _) => {
+                if let Some(target) = current(variable, mode).as_ref().and_then(VariableValue::alias) {
+                    let value = json!({"alias": target, "opacity": {"alias": pick.id}});
+                    app.run("variable.set", json!({"variable": variable, "mode": mode, "value": value}));
+                }
             }
             (Target::Proto(slot), _) => crate::proto_editor::pick_variable(app, slot, &pick.id),
             (Target::Style { style, field }, _) => {
