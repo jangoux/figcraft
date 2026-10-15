@@ -1,7 +1,8 @@
 //! Auto layout commands beyond `layout.add` / `layout.remove` (in `structure`) and the layout
-//! keys of `node.set` (gap, padding, alignment, sizing, min/max, absolute, grid cells): grid tracks.
+//! keys of `node.set` (gap, padding, alignment, sizing, min/max, absolute, grid cells): grid tracks
+//! and responsive grid columns.
 
-use figcraft_doc::{GridTrack, LayoutMode, Sizing};
+use figcraft_doc::{AutoColumns, GridTrack, LayoutMode, Sizing};
 use serde_json::Value;
 
 use super::props::sizing;
@@ -10,13 +11,69 @@ use crate::params::*;
 use crate::{Result, Session, bad, spec};
 
 pub fn specs() -> Vec<CommandSpec> {
-    vec![spec!(
-        "layout.setTrack",
-        "Set grid track size",
-        "{ids?, axis: columns|rows, index (0-based), sizing: fixed|hug|fill, value? (fixed: px, default the track's current size; fill: fr, default 1)}",
-        true,
-        set_track
-    )]
+    vec![
+        spec!(
+            "layout.setTrack",
+            "Set grid track size",
+            "{ids?, axis: columns|rows, index (0-based), sizing: fixed|hug|fill, value? (fixed: px, default the track's current size; fill: fr, default 1)}",
+            true,
+            set_track
+        ),
+        spec!(
+            "layout.setGridAuto",
+            "Responsive grid columns",
+            "{ids?, min (px, > 0: each column's least width), fit? (bool, default false: auto-fill keeps empty columns; true: auto-fit drops them so the children stretch)} \
+             — a grid frame gets as many 1fr columns as its width holds (CSS repeat(auto-fill|auto-fit, minmax(min, 1fr))); its width must be fixed or fill, not hug. \
+             The column count and tracks stay stored for layout.clearGridAuto. A FigCraft extension",
+            true,
+            set_grid_auto
+        ),
+        spec!("layout.clearGridAuto", "Fixed grid columns", "{ids?} — back to the grid's own column count and tracks", true, clear_grid_auto),
+    ]
+}
+
+/// Largest responsive column minimum (px).
+const MAX_AUTO_MIN: f64 = 1e6;
+
+fn set_grid_auto(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "layout.setGridAuto";
+    let min = match get(p, "min") {
+        Some(Value::Number(n)) => n.as_f64().filter(|m| m.is_finite() && *m > 0.0 && *m <= MAX_AUTO_MIN),
+        _ => None,
+    }
+    .ok_or_else(|| bad(CMD, format!("`min` must be a number of px above 0 and at most {MAX_AUTO_MIN}")))?;
+    let fit = match get(p, "fit") {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(b)) => *b,
+        Some(_) => return Err(bad(CMD, "`fit` must be a boolean")),
+    };
+    let ids = req_targets(CMD, s, p)?;
+    let doc = s.doc_mut()?;
+    for id in ids {
+        let n = doc.get_mut(id)?;
+        let hugs = n.child_layout.sizing_h == Sizing::Hug;
+        let Some(l) = n.layout.as_mut().filter(|l| l.mode == LayoutMode::Grid) else {
+            return Err(bad(CMD, format!("node {id} is not a grid auto layout frame")));
+        };
+        if hugs {
+            return Err(bad(CMD, format!("node {id} hugs its width: responsive columns need a fixed or fill width")));
+        }
+        l.column_auto = Some(AutoColumns { min, fit });
+    }
+    ok()
+}
+
+fn clear_grid_auto(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "layout.clearGridAuto";
+    let ids = req_targets(CMD, s, p)?;
+    let doc = s.doc_mut()?;
+    for id in ids {
+        let Some(l) = doc.get_mut(id)?.layout.as_mut().filter(|l| l.mode == LayoutMode::Grid) else {
+            return Err(bad(CMD, format!("node {id} is not a grid auto layout frame")));
+        };
+        l.column_auto = None;
+    }
+    ok()
 }
 
 fn set_track(s: &mut Session, p: &Value) -> Result<Value> {
@@ -38,6 +95,9 @@ fn set_track(s: &mut Session, p: &Value) -> Result<Value> {
         let Some(l) = n.layout.as_mut().filter(|l| l.mode == LayoutMode::Grid) else {
             return Err(bad(CMD, format!("node {id} is not a grid auto layout frame")));
         };
+        if columns && l.column_auto.is_some() {
+            return Err(bad(CMD, format!("node {id} has responsive columns (all 1fr): layout.clearGridAuto first")));
+        }
         let count = tracks_now.len().max(if columns { l.grid_columns } else { l.grid_rows } as usize);
         if !(0.0..count as f64).contains(&index) {
             return Err(bad(CMD, format!("`index` must be 0..{count}")));

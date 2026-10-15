@@ -250,7 +250,7 @@ fn archive(
     Ok(buf.into_inner())
 }
 
-type Fields = Vec<(&'static str, Kv<'static>)>;
+pub(super) type Fields = Vec<(&'static str, Kv<'static>)>;
 
 fn o(f: Fields) -> Kv<'static> {
     Kv::Object(f)
@@ -892,7 +892,7 @@ impl<'d> Exporter<'d> {
             // (which the import puts back).
             self.warn("strokes wider on one side of their path were written as filled outlines (the stroke itself is kept for FigCraft)");
             let children = self.layer(&outline, parent, f, nested);
-            f.push(("pluginData", arr(vec![o(vec![("pluginID", s(STASH.0)), ("value", s(&original)), ("key", s(STASH.1))])])));
+            stash(f, STASH.1, &original);
             return children;
         }
         let main = match &n.kind {
@@ -1408,7 +1408,18 @@ impl<'d> Exporter<'d> {
             // Instance layers share their main layer's track ids, so unchanged tracks and the cells
             // their layers sit in still match.
             let key = self.main_layer(n.id);
-            let (want_c, want_r) = (l.grid_columns.min(1000) as usize, l.grid_rows.min(1000) as usize);
+            // Responsive columns are FigCraft's: written as the columns they make at this width (so
+            // the grid looks the same), with the setting kept as plugin data for our import.
+            let auto = figcraft_layout::auto_columns(n);
+            let columns = if auto.is_some() { figcraft_layout::columns_of(self.doc, n) } else { l.grid_columns };
+            let (want_c, want_r) = (columns.clamp(1, 1000) as usize, l.grid_rows.min(1000) as usize);
+            if let Some(a) = auto {
+                let kept = serde_json::json!({"min": a.min, "fit": a.fit, "frozen": want_c}).to_string();
+                if kept.len() <= MAX_GRID_AUTO_STASH {
+                    stash(f, GRID_AUTO_STASH, &kept);
+                }
+                self.warn("responsive grid columns were written as the columns they make at the frame's width (the setting is kept for FigCraft)");
+            }
             let (cols, rows) = match self.tracks.get(&key) {
                 Some((c, r)) if (c.len(), r.len()) == (want_c, want_r) => (c.clone(), r.clone()),
                 _ => ((0..want_c).map(|_| self.next_aux()).collect(), (0..want_r).map(|_| self.next_aux()).collect()),
@@ -1420,7 +1431,8 @@ impl<'d> Exporter<'d> {
                 )])
             };
             f.extend([("gridColumnGap", fl(l.gap)), ("gridRowGap", fl(l.cross_gap)), ("gridColumns", map(&cols)), ("gridRows", map(&rows))]);
-            if l.column_tracks.iter().chain(&l.row_tracks).any(|t| t.sizing != Sizing::Fill) {
+            let own_columns = if auto.is_some() { &[][..] } else { &l.column_tracks[..] };
+            if own_columns.iter().chain(&l.row_tracks).any(|t| t.sizing != Sizing::Fill) {
                 self.warn("grid tracks of fixed or content size were written as equal tracks");
             }
             self.tracks.insert(key, (cols, rows));
@@ -2180,6 +2192,21 @@ impl<'d> Exporter<'d> {
 pub(super) const STASH: (&str, &str) = ("figcraft", "stroke");
 /// The plugin id and key marking a margin wrapper (`figcraft_doc::margin`).
 pub(super) const MARGIN: (&str, &str) = ("figcraft", "margin");
+/// The key (under [`STASH`]'s plugin id) under which a grid keeps its responsive columns:
+/// `{"min", "fit", "frozen"}`, `frozen` being the column count written.
+pub(super) const GRID_AUTO_STASH: &str = "gridAuto";
+/// Longest kept responsive columns setting (bytes of JSON).
+pub(super) const MAX_GRID_AUTO_STASH: usize = 256;
+
+/// Keep `value` for FigCraft under `key` in a layer's plugin data: every FigCraft-only setting a
+/// layer keeps goes in one `pluginData` list (the format's other readers ignore it).
+pub(super) fn stash(f: &mut Fields, key: &'static str, value: &str) {
+    let entry = o(vec![("pluginID", s(STASH.0)), ("value", s(value)), ("key", s(key))]);
+    match f.iter_mut().find(|(k, _)| *k == "pluginData") {
+        Some((_, Kv::Array(list))) => list.push(entry),
+        _ => f.push(("pluginData", arr(vec![entry]))),
+    }
+}
 /// Longest kept description of such a layer (bytes of JSON).
 const MAX_STASH: usize = 1 << 20;
 

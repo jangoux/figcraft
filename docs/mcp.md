@@ -125,7 +125,12 @@ Or in a project's `.mcp.json`:
     `auto` or `null` uses the frame's alignment) to align it in its cell. `fr` tracks behave like
     the CSS `fr` unit: a track never gets less than its content (a fixed-size child bigger than
     its share keeps it; the other `fr` tracks share the rest). `inspect` reports a grid child's
-    resolved `gridCell`.
+    resolved `gridCell`. Responsive columns (a FigCraft extension, like CSS
+    `repeat(auto-fill | auto-fit, minmax(min, 1fr))`): `layout.setGridAuto {min, fit?}` gives a
+    grid with a fixed or fill width as many `1fr` columns of at least `min` px as its width holds
+    (`fit: true` drops the ones the children leave empty); `layout.clearGridAuto` goes back to
+    `gridColumns` and `columnTracks`, which stay stored. `inspect` reports `columnAuto` and the
+    frame's `effectiveColumns`.
 - **Every menu action is a command** (`list_commands`), and most commands act on `ids` when given,
   else on the selection. New layers become the selection.
 - Colours are `"#RRGGBB"` or `"#RRGGBBAA"`. Inside fills, strokes and effects passed through the MCP

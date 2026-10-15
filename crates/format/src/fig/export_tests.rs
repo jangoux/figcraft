@@ -18,6 +18,10 @@ use super::*;
 #[path = "assets_tests.rs"]
 mod assets;
 
+/// Responsive grid columns through `.fig` (kept as plugin data, frozen columns for other readers).
+#[path = "grid_auto_tests.rs"]
+mod grid_auto;
+
 /// A cheap deterministic generator.
 struct Lcg(u64);
 impl Lcg {

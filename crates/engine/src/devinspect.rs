@@ -538,7 +538,12 @@ fn auto_layout(doc: &Document, n: &Node, l: &AutoLayout) -> Section {
     };
     let mut rows = vec![prop("Direction", dir)];
     if l.mode == LayoutMode::Grid {
-        rows.push(prop("Grid", format!("{} × {}", l.grid_columns, l.grid_rows)));
+        // Responsive columns: the count the width gives now, and the rows the children fill.
+        let grid = match figcraft_layout::grid_geometry(doc, n.id).filter(|_| figcraft_layout::auto_columns(n).is_some()) {
+            Some(g) => format!("Auto {} × {}", g.columns.len(), g.rows.len()),
+            None => format!("{} × {}", l.grid_columns, l.grid_rows),
+        };
+        rows.push(prop("Grid", grid));
         rows.push(prop("Gap", format!("{} {}", num(l.gap), num(l.cross_gap))));
     } else {
         let gap = match l.main_align {

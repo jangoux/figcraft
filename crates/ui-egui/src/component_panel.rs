@@ -490,6 +490,7 @@ fn group_label(g: &str) -> String {
         "padding" => tr("Padding"),
         "gap" => tr("Gap"),
         "alignment" => tr("Alignment"),
+        "gridAuto" => tr("Responsive columns"),
         "grids" => tr("Layout grids"),
         "exports" => tr("Export settings"),
         "interactions" => tr("Interactions"),

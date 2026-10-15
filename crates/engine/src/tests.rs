@@ -358,6 +358,12 @@ fn every_command_survives_junk_params() {
         json!({"id": 2, "margin": [1, 2, 3]}),
         json!({"id": 3, "margin": {"top": 1}}),
         json!({"id": 2, "margin": "-Infinity"}),
+        // Responsive grid columns: minimums and fit as junk.
+        json!({"id": 1, "min": "NaN", "fit": "yes"}),
+        json!({"ids": [1, 2], "min": 0, "fit": 1}),
+        json!({"id": 1, "min": -1e308, "fit": null}),
+        json!({"id": 1, "min": 1e308, "fit": [true]}),
+        json!({"id": 1, "min": {"x": 1}, "fit": {"x": 1}}),
     ];
     for spec in all_commands() {
         if matches!(

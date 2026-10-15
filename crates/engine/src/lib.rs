@@ -1471,6 +1471,10 @@ mod fx_behaviour_tests;
 #[cfg(test)]
 mod gesture_preview_tests;
 #[cfg(test)]
+mod grid_auto_tests;
+#[cfg(test)]
+mod grid_codegen_tests;
+#[cfg(test)]
 mod hide_publishing_tests;
 #[cfg(test)]
 mod history_behaviour_tests;

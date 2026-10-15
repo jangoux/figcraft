@@ -335,21 +335,18 @@ pub(crate) fn css_decls(doc: &Document, n: &Node, t: &mut Tokens, hug: (bool, bo
     if !hug.1 {
         put("height", tok(doc, n, &["height"], px(n.height), t));
     }
-    if let Some(l) = &n.layout {
+    if let Some(l) = n.layout.as_ref().filter(|l| l.mode == LayoutMode::Grid) {
+        for (key, value) in grid_decls(doc, n, l, hug, t) {
+            put(key, value);
+        }
+    } else if let Some(l) = &n.layout {
         put("display", "flex".into());
         put("flex-direction", if l.mode == LayoutMode::Vertical { "column" } else { "row" }.into());
         if l.wrap {
             put("flex-wrap", "wrap".into());
         }
         put("gap", tok(doc, n, &["gap"], px(l.gap), t));
-        let [pt, pr, pb, pl] = l.padding;
-        let sides = [
-            tok(doc, n, &["paddingTop", "paddingVertical", "padding"], px(pt), t),
-            tok(doc, n, &["paddingRight", "paddingHorizontal", "padding"], px(pr), t),
-            tok(doc, n, &["paddingBottom", "paddingVertical", "padding"], px(pb), t),
-            tok(doc, n, &["paddingLeft", "paddingHorizontal", "padding"], px(pl), t),
-        ];
-        put("padding", sides.join(" "));
+        put("padding", padding(doc, n, l, t));
         let justify = match l.main_align {
             MainAlign::Min => "flex-start",
             MainAlign::Center => "center",
@@ -519,6 +516,167 @@ pub(crate) fn css_decls(doc: &Document, n: &Node, t: &mut Tokens, hug: (bool, bo
     out
 }
 
+/// An auto layout frame's padding as one CSS `padding` value (bound variables as tokens).
+fn padding(doc: &Document, n: &Node, l: &AutoLayout, t: &mut Tokens) -> String {
+    let px = |v: f64| format!("{}px", num(v));
+    let [pt, pr, pb, pl] = l.padding;
+    let sides = [
+        tok(doc, n, &["paddingTop", "paddingVertical", "padding"], px(pt), t),
+        tok(doc, n, &["paddingRight", "paddingHorizontal", "padding"], px(pr), t),
+        tok(doc, n, &["paddingBottom", "paddingVertical", "padding"], px(pb), t),
+        tok(doc, n, &["paddingLeft", "paddingHorizontal", "padding"], px(pl), t),
+    ];
+    sides.join(" ")
+}
+
+/// One grid axis as a CSS track list: fixed tracks in px, hug tracks `auto`, fill tracks in `fr`
+/// (`auto` when the frame hugs that axis: FigCraft then sizes each to its own content, while CSS
+/// would make every `1fr` track as big as the largest). Equal tracks become `repeat()`.
+fn css_tracks(specs: &[GridTrack], count: usize, hug: bool) -> String {
+    let track = |i: usize| {
+        let t = specs.get(i).copied().unwrap_or_default();
+        let v = if t.value.is_finite() { t.value.clamp(0.0, 1e6) } else { 0.0 };
+        match t.sizing {
+            Sizing::Fixed => format!("{}px", num(v)),
+            Sizing::Hug => "auto".to_string(),
+            Sizing::Fill if hug => "auto".to_string(),
+            Sizing::Fill => format!("{}fr", num(v)),
+        }
+    };
+    let list: Vec<String> = (0..count.max(1)).map(track).collect();
+    match list.first() {
+        Some(first) if list.len() > 1 && list.iter().all(|x| x == first) => format!("repeat({}, {first})", list.len()),
+        _ => list.join(" "),
+    }
+}
+
+/// Responsive grid columns as CSS: `repeat(auto-fill | auto-fit, minmax(min, 1fr))`.
+fn auto_tracks(n: &Node) -> Option<String> {
+    let a = figcraft_layout::auto_columns(n)?;
+    Some(format!("repeat({}, minmax({}px, 1fr))", if a.fit { "auto-fit" } else { "auto-fill" }, num(a.min)))
+}
+
+/// CSS grid for a grid auto layout frame (`hug`: its width / height are left out). Tracks start
+/// at the top left (`*-content: start`: CSS would otherwise stretch `auto` tracks into the free
+/// space); the frame's alignment places each child in its cell (`*-items`; a child's own alignment
+/// and filling are set on the child).
+fn grid_decls(doc: &Document, n: &Node, l: &AutoLayout, hug: (bool, bool), t: &mut Tokens) -> Vec<(&'static str, String)> {
+    let px = |v: f64| format!("{}px", num(v));
+    // Fill tracks size to their content on an axis the frame hugs.
+    let hugs = (n.child_layout.sizing_h == Sizing::Hug, n.child_layout.sizing_v == Sizing::Hug);
+    let (columns, rows) = grid_counts(doc, n.id).unwrap_or((1, 1));
+    let items = |a: CellAlign| match a {
+        CellAlign::Min => "start",
+        CellAlign::Center => "center",
+        CellAlign::Max => "end",
+    };
+    let mut out = vec![("display", "grid".to_string())];
+    if hug.0 {
+        // The box hugs its tracks (a block box would take its container's width).
+        out.push(("width", "fit-content".to_string()));
+    }
+    if let Some(auto) = auto_tracks(n) {
+        out.push(("grid-template-columns", auto));
+        // The rows grow with the width (fewer columns, more rows): the frame's own, then more like
+        // the ones FigCraft adds (`1fr`, `auto` when it hugs its height).
+        out.push(("grid-template-rows", css_tracks(&l.row_tracks, (l.grid_rows as usize).clamp(1, 1000), hugs.1)));
+        out.push(("grid-auto-rows", if hugs.1 { "auto" } else { "1fr" }.to_string()));
+    } else {
+        out.push(("grid-template-columns", css_tracks(&l.column_tracks, columns, hugs.0)));
+        out.push(("grid-template-rows", css_tracks(&l.row_tracks, rows, hugs.1)));
+    }
+    out.extend([
+        ("column-gap", tok(doc, n, &["gap"], px(l.gap), t)),
+        ("row-gap", tok(doc, n, &["crossGap"], px(l.cross_gap), t)),
+        ("padding", padding(doc, n, l, t)),
+        ("justify-content", "start".to_string()),
+        ("align-content", "start".to_string()),
+        ("justify-items", items(grid_frame_align(l).0).to_string()),
+        ("align-items", items(grid_frame_align(l).1).to_string()),
+    ]);
+    out
+}
+
+/// A grid frame's column and row counts as FigCraft lays it out now (rows grow with the children).
+fn grid_counts(doc: &Document, frame: NodeId) -> Option<(usize, usize)> {
+    let g = figcraft_layout::grid_geometry(doc, frame)?;
+    Some((g.columns.len(), g.rows.len()))
+}
+
+/// A grid frame's alignment of its children in their cells, horizontally and vertically.
+fn grid_frame_align(l: &AutoLayout) -> (CellAlign, CellAlign) {
+    let h = match l.main_align {
+        MainAlign::Center => CellAlign::Center,
+        MainAlign::Max => CellAlign::Max,
+        _ => CellAlign::Min,
+    };
+    let v = match l.cross_align {
+        CrossAlign::Center => CellAlign::Center,
+        CrossAlign::Max => CellAlign::Max,
+        _ => CellAlign::Min,
+    };
+    (h, v)
+}
+
+/// Whether grid child `n` fills its cell horizontally / vertically (a filling child of a frame that
+/// hugs that axis keeps its own size, as in the canvas).
+fn grid_fills(n: &Node, parent: &Node) -> (bool, bool) {
+    let (cl, pcl) = (&n.child_layout, &parent.child_layout);
+    (cl.sizing_h == Sizing::Fill && pcl.sizing_h != Sizing::Hug, cl.sizing_v == Sizing::Fill && pcl.sizing_v != Sizing::Hug)
+}
+
+/// How child `n` sits in its grid frame (geometry `g`): its cell, when the grid places anything
+/// other than one child per cell in reading order (then every child gets its lines: CSS
+/// auto-placement would fill holes FigCraft leaves empty), and its alignment in the cell. With
+/// responsive columns the cells move with the width, so children get only their spans (anchors
+/// can't be written for every width: CSS would add columns for an anchor past the last one).
+fn grid_item_decls(doc: &Document, n: &Node, parent: Option<&Node>, g: &figcraft_layout::GridGeometry) -> String {
+    let mut out = String::new();
+    if parent.and_then(figcraft_layout::auto_columns).is_some() {
+        if let Some(c) = g.cells.iter().find(|c| c.id == n.id) {
+            if c.column_span > 1 {
+                out.push_str(&format!("grid-column: span {};\n", c.column_span));
+            }
+            if c.row_span > 1 {
+                out.push_str(&format!("grid-row: span {};\n", c.row_span));
+            }
+        }
+        return out + &cell_align_decls(n, parent);
+    }
+    let placed = g.cells.iter().any(|c| {
+        doc.node(c.id).is_some_and(|k| k.child_layout.grid_column.is_some() || k.child_layout.grid_row.is_some())
+            || c.column_span > 1
+            || c.row_span > 1
+    });
+    if placed && let Some(c) = g.cells.iter().find(|c| c.id == n.id) {
+        out.push_str(&format!("grid-column: {} / span {};\n", c.column + 1, c.column_span));
+        out.push_str(&format!("grid-row: {} / span {};\n", c.row + 1, c.row_span));
+    }
+    out + &cell_align_decls(n, parent)
+}
+
+/// Grid child `n`'s alignment in its cell: stretched when it fills, else its own (if any).
+fn cell_align_decls(n: &Node, parent: Option<&Node>) -> String {
+    let mut out = String::new();
+    let self_align = |a: CellAlign| match a {
+        CellAlign::Min => "start",
+        CellAlign::Center => "center",
+        CellAlign::Max => "end",
+    };
+    let (fill_w, fill_h) = parent.map(|p| grid_fills(n, p)).unwrap_or((false, false));
+    if fill_w {
+        out.push_str("justify-self: stretch;\n");
+    } else if let Some(a) = n.child_layout.grid_align_h {
+        out.push_str(&format!("justify-self: {};\n", self_align(a)));
+    }
+    if fill_h {
+        out.push_str("align-self: stretch;\n");
+    } else if let Some(a) = n.child_layout.grid_align_v {
+        out.push_str(&format!("align-self: {};\n", self_align(a)));
+    }
+    out
+}
+
 /// A gradient fill on a `w`×`h` box as a CSS background: linear along its handles' direction
 /// (CSS angles: 0deg up, 90deg right), radial with its handles' radii, angular as a conic
 /// gradient from its start direction.
@@ -581,7 +739,8 @@ fn jsx_text(s: &str) -> String {
 }
 
 /// The whole tree under `id` as nested HTML with a stylesheet: auto layout frames become
-/// flexboxes, other children are placed absolutely in their parent, text becomes paragraphs.
+/// flexboxes (CSS grids for grid auto layout), other children are placed absolutely in their
+/// parent, text becomes paragraphs.
 fn html(doc: &Document, id: NodeId) -> String {
     let ctx = Ctx::new(doc, id);
     let mut out = Markup::new(&ctx, CodeLang::Html);
@@ -609,6 +768,8 @@ pub(crate) struct Markup<'c, 'a> {
     /// Each layer's path in the tree (names with sibling counts), class and declarations, so
     /// variants can be compared layer by layer.
     pub rules: Vec<(String, String, String)>,
+    /// Grid frames met so far: their tracks and cells.
+    grids: std::collections::HashMap<NodeId, Option<figcraft_layout::GridGeometry>>,
 }
 
 impl<'c, 'a> Markup<'c, 'a> {
@@ -624,6 +785,7 @@ impl<'c, 'a> Markup<'c, 'a> {
             root_attrs: String::new(),
             margin: None,
             rules: Vec::new(),
+            grids: std::collections::HashMap::new(),
         }
     }
 
@@ -675,6 +837,15 @@ impl<'c, 'a> Markup<'c, 'a> {
         self.element(n, parent, depth, path);
     }
 
+    /// Grid frame `p`'s tracks and cells (worked out once per frame).
+    fn grid(&mut self, p: &Node) -> Option<figcraft_layout::GridGeometry> {
+        if p.layout.as_ref().is_none_or(|l| l.mode != LayoutMode::Grid) {
+            return None;
+        }
+        let doc = self.ctx.doc;
+        self.grids.entry(p.id).or_insert_with(|| figcraft_layout::grid_geometry(doc, p.id)).clone()
+    }
+
     fn rule(&mut self, path: &str, class: &str, decls: String) {
         self.styles.push_str(&format!(".{class} {{\n"));
         for line in decls.lines() {
@@ -702,6 +873,8 @@ impl<'c, 'a> Markup<'c, 'a> {
         let in_flow = parent.is_some_and(|p| p.layout.is_some()) && !n.child_layout.absolute;
         if root {
             decls.push_str("position: relative;\n");
+        } else if let Some(g) = in_flow.then(|| parent.and_then(|p| self.grid(p))).flatten() {
+            decls.push_str(&grid_item_decls(doc, n, parent, &g));
         } else if in_flow {
             let vertical = parent.and_then(|p| p.layout.as_ref()).is_some_and(|l| l.mode == LayoutMode::Vertical);
             let (main, cross) =
@@ -740,7 +913,12 @@ impl<'c, 'a> Markup<'c, 'a> {
             }
         }
         let hugs = n.layout.is_some() || matches!(n.kind, NodeKind::Text(_));
-        let hug = (hugs && n.child_layout.sizing_h == Sizing::Hug, hugs && n.child_layout.sizing_v == Sizing::Hug);
+        let mut hug = (hugs && n.child_layout.sizing_h == Sizing::Hug, hugs && n.child_layout.sizing_v == Sizing::Hug);
+        if in_flow && let Some(p) = parent.filter(|p| p.layout.as_ref().is_some_and(|l| l.mode == LayoutMode::Grid)) {
+            // A child filling its cell takes the cell's size, not a size of its own.
+            let (fill_w, fill_h) = grid_fills(n, p);
+            hug = (hug.0 || fill_w, hug.1 || fill_h);
+        }
         let mut own = css_decls(doc, n, &mut self.tokens, hug);
         if n.layout.is_none() && !n.children.is_empty() && !root && in_flow {
             own.push_str("position: relative;\n");

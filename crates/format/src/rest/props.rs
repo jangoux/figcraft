@@ -430,10 +430,23 @@ pub(super) fn auto_layout(v: &Value) -> Option<AutoLayout> {
         },
         grid_columns: count("gridColumnCount", 2),
         grid_rows: count("gridRowCount", 2),
+        column_auto: grid.then(|| grid_auto(v)).flatten(),
         strokes_included: flag(v, "strokesIncludedInLayout").unwrap_or(false),
         reverse_z: flag(v, "itemReverseZIndex").unwrap_or(false),
         ..AutoLayout::default()
     })
+}
+
+/// A grid's responsive columns (`gridAuto: {min, fit}`, FigCraft's extension of the file JSON);
+/// `None` when missing or unsound.
+fn grid_auto(v: &Value) -> Option<figcraft_doc::AutoColumns> {
+    let a = v.get("gridAuto")?;
+    let min = a.get("min").and_then(Value::as_f64).filter(|m| m.is_finite() && *m > 0.0 && *m <= 1e6)?;
+    let fit = match a.get("fit") {
+        None => false,
+        Some(f) => f.as_bool()?,
+    };
+    Some(figcraft_doc::AutoColumns { min, fit })
 }
 
 /// How the node sizes and sits in its parent: its own hug/fixed axes (auto layout frames), its

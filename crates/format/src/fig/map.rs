@@ -629,7 +629,13 @@ impl<'a> Mapper<'a> {
         if mode == "GRID" {
             copy_num(o, v, "gridColumnGap", "gridColumnGap");
             copy_num(o, v, "gridRowGap", "gridRowGap");
-            o.insert("gridColumnCount".into(), json!(tracks(v, "gridColumns").len()));
+            let columns = tracks(v, "gridColumns").len();
+            o.insert("gridColumnCount".into(), json!(columns));
+            // Responsive columns (`gridAuto`, our extension of the file JSON) come back only while the
+            // file still has the columns they were written as: a grid edited elsewhere keeps that edit.
+            if let Some(auto) = stashed(v, super::export::GRID_AUTO_STASH).and_then(|kept| grid_auto(kept, columns)) {
+                o.insert("gridAuto".into(), auto);
+            }
             o.insert("gridRowCount".into(), json!(tracks(v, "gridRows").len()));
             let sizes = ["gridColumnsSizing", "gridRowsSizing"]
                 .iter()
@@ -1262,9 +1268,7 @@ fn stroke(o: &mut Obj, v: &View) {
     }
     // A layer written as the outline of its stroke keeps what it was as plugin data
     // (`outlinedStroke`, our extension of the file JSON).
-    let (id, key) = super::export::STASH;
-    let kept = v.list("pluginData").iter().find(|p| p.get("pluginID").and_then(Kv::str) == Some(id) && p.get("key").and_then(Kv::str) == Some(key));
-    if let Some(original) = kept.and_then(|p| p.get("value")).and_then(Kv::str).and_then(|s| serde_json::from_str::<Value>(s).ok()) {
+    if let Some(original) = stashed(v, super::export::STASH.1).and_then(|s| serde_json::from_str::<Value>(s).ok()) {
         o.insert("outlinedStroke".into(), original);
     }
     // A variable width: each point's reach on the two sides of the path (shares of the stroke
@@ -1483,6 +1487,32 @@ fn bound(v: Option<&Kv>, fields: &[(&str, &str)]) -> Option<Value> {
 }
 
 /// The track ids of a grid's columns or rows, in order.
+/// What a layer keeps for FigCraft under `key` in its plugin data (see `export::stash`).
+fn stashed<'v>(v: &View<'v>, key: &str) -> Option<&'v str> {
+    let id = super::export::STASH.0;
+    v.list("pluginData")
+        .iter()
+        .find(|p| p.get("pluginID").and_then(Kv::str) == Some(id) && p.get("key").and_then(Kv::str) == Some(key))
+        .and_then(|p| p.get("value"))
+        .and_then(Kv::str)
+}
+
+/// A grid's kept responsive columns as `{"min", "fit"}`, when the kept JSON is sound and the grid
+/// still has the `frozen` column count it was written with (else `None`: the file wins).
+pub(super) fn grid_auto(kept: &str, columns: usize) -> Option<Value> {
+    if kept.len() > super::export::MAX_GRID_AUTO_STASH {
+        return None;
+    }
+    let v: Value = serde_json::from_str(kept).ok()?;
+    let min = v.get("min").and_then(Value::as_f64).filter(|m| m.is_finite() && *m > 0.0 && *m <= 1e6)?;
+    let fit = match v.get("fit") {
+        None => false,
+        Some(f) => f.as_bool()?,
+    };
+    let frozen = v.get("frozen").and_then(Value::as_u64)?;
+    (usize::try_from(frozen).ok()? == columns).then(|| json!({"min": min, "fit": fit}))
+}
+
 fn tracks(v: &View, key: &str) -> Vec<String> {
     let mut t: Vec<(&str, String)> = v
         .get(key)
