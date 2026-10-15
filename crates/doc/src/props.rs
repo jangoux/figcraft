@@ -1141,6 +1141,12 @@ pub struct ChildLayout {
     pub max_w: Option<f64>,
     pub min_h: Option<f64>,
     pub max_h: Option<f64>,
+    /// Fixed % (a FigCraft extension): on a Fixed axis, the width / height as a percentage of the
+    /// parent's ([`crate::Document::percent_basis`]), kept as the parent resizes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub percent_w: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub percent_h: Option<f64>,
     /// Grid auto layout: anchor column / row (0-based); `None` = placed automatically.
     pub grid_column: Option<u32>,
     pub grid_row: Option<u32>,

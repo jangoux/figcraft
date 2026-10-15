@@ -6,6 +6,8 @@
 //!   gap, padding and alignment; each child is Fixed, Hug (its own content) or Fill (shares the
 //!   free space), within its min/max size. A Hug container sizes to its children. Absolute
 //!   children (ignoring auto layout) are not placed; they follow their constraints instead.
+//! - Fixed % ([`percent_target`], [`apply_percent`]): a layer Fixed on an axis can keep its size
+//!   there as a percentage of its parent's (inner size in an auto layout flow), a FigCraft extension.
 //! - [`coherent_sizing`]: Fill and Hug only where they can apply (Fill in an auto layout flow on an
 //!   axis the parent doesn't hug; Hug on auto layout frames and text), else Fixed.
 //! - [`apply_constraints`]: children of a regular frame follow their constraints when it resizes.
@@ -16,7 +18,7 @@
 
 use figcraft_doc::{
     AutoLayout, CellAlign, ContentAlign, CrossAlign, Document, GridAlign, GridKind, HConstraint, LayoutGrid, LayoutMode, MainAlign, NodeId, NodeKind,
-    Sizing, StrokeAlign, TextAutoResize, VConstraint,
+    Sizing, TextAutoResize, VConstraint,
 };
 use figcraft_geom::{Affine, Point, Rect};
 
@@ -181,24 +183,87 @@ fn coherent_own_sizing(doc: &mut Document, id: NodeId) -> bool {
             TextAutoResize::None | TextAutoResize::Truncate => (fixed_if_hug(h), fixed_if_hug(v)),
         };
     }
-    if (h, v) == (n.child_layout.sizing_h, n.child_layout.sizing_v) {
+    // Fixed % needs a parent to measure and a Fixed axis; an axis the auto layout parent hugs has
+    // no size of its own to share, so the layer keeps its current size there.
+    let basis = doc.percent_basis(id).is_some();
+    let percent = |p: Option<f64>, s: Sizing, horizontal: bool| {
+        p.and_then(figcraft_doc::clean_percent).filter(|_| basis && s == Sizing::Fixed && parent_hugs(horizontal) != Some(true))
+    };
+    let (pw, ph) = (percent(n.child_layout.percent_w, h, true), percent(n.child_layout.percent_h, v, false));
+    let cl = &n.child_layout;
+    if (h, v, pw, ph) == (cl.sizing_h, cl.sizing_v, cl.percent_w, cl.percent_h) {
         return false;
     }
     let Some(n) = doc.node_mut(id) else { return false };
     n.child_layout.sizing_h = h;
     n.child_layout.sizing_v = v;
+    n.child_layout.percent_w = pw;
+    n.child_layout.percent_h = ph;
     true
 }
 
-/// Padding `(top, right, bottom, left)` of an auto layout frame, sanitised, plus the frame's own
-/// inside stroke (per side) when strokes are included in the layout; center and outside strokes
-/// never take up space.
+/// Fixed %: the own size a layer with these settings takes on each axis it sizes as a percentage
+/// of `basis` (its parent's size, [`Document::percent_basis`]), within its min/max; `None` on
+/// the other axes.
+pub fn percent_size(cl: &figcraft_doc::ChildLayout, basis: (f64, f64)) -> (Option<f64>, Option<f64>) {
+    let at = |p: Option<f64>, b: f64, min: Option<f64>, max: Option<f64>| {
+        p.and_then(figcraft_doc::clean_percent).map(|p| clamp_size(finite_or_zero(b) * p / 100.0, min, max))
+    };
+    (at(cl.percent_w, basis.0, cl.min_w, cl.max_w), at(cl.percent_h, basis.1, cl.min_h, cl.max_h))
+}
+
+/// [`percent_size`] of layer `id` in its parent as it is now.
+pub fn percent_target(doc: &Document, id: NodeId) -> (Option<f64>, Option<f64>) {
+    let Some(n) = doc.node(id) else { return (None, None) };
+    if n.child_layout.percent_w.is_none() && n.child_layout.percent_h.is_none() {
+        return (None, None);
+    }
+    doc.percent_basis(id).map(|b| percent_size(&n.child_layout, b)).unwrap_or((None, None))
+}
+
+/// Whether layer `id` is placed by its parent's auto layout (visible, not ignoring it).
+fn in_flow(doc: &Document, id: NodeId) -> bool {
+    doc.node(id)
+        .is_some_and(|n| !n.child_layout.absolute && n.parent.and_then(|p| doc.node(p)).is_some_and(|p| p.layout.is_some() && p.kind.is_frame_like()))
+}
+
+/// Where a box spanning `a0..a1` on one axis starts once it is `size` long, holding the edge (or
+/// the centre) its constraint keeps: `end` keeps the far edge, `center` the middle.
+fn anchored(a0: f64, a1: f64, size: f64, end: bool, center: bool) -> f64 {
+    if end {
+        a1 - size
+    } else if center {
+        (a0 + a1 - size) / 2.0
+    } else {
+        a0
+    }
+}
+
+/// Fixed %: size layer `id` from its parent where no auto layout does (a regular frame's child, or
+/// one ignoring auto layout), keeping the edge or centre its constraints hold. Children in an auto
+/// layout flow are sized by [`layout_frame`]. Returns whether it changed.
+pub fn apply_percent(doc: &mut Document, id: NodeId, m: &dyn Measure) -> bool {
+    if in_flow(doc, id) {
+        return false;
+    }
+    let (tw, th) = percent_target(doc, id);
+    let Some(n) = doc.node(id) else { return false };
+    let (w, h) = (tw.unwrap_or(n.width), th.unwrap_or(n.height));
+    if (w - n.width).abs() < 1e-9 && (h - n.height).abs() < 1e-9 {
+        return false;
+    }
+    let (hc, vc) = (n.constraints.horizontal, n.constraints.vertical);
+    let b = figcraft_geom::transform_rect_bbox(n.transform, n.local_rect());
+    resize_child(doc, id, w, h, m);
+    let (bw, bh) = outer_size(doc, id);
+    let x = if tw.is_some() { anchored(b.x0, b.x1, bw, hc == HConstraint::Right, hc == HConstraint::Center) } else { b.x0 };
+    let y = if th.is_some() { anchored(b.y0, b.y1, bh, vc == VConstraint::Bottom, vc == VConstraint::Center) } else { b.y0 };
+    place(doc, id, x, y);
+    true
+}
+
 fn insets(f: &figcraft_doc::Node, al: &AutoLayout) -> (f64, f64, f64, f64) {
-    let included = al.strokes_included && f.has_visible_stroke() && f.stroke.align == StrokeAlign::Inside;
-    let stroke = if included { f.stroke.sides.unwrap_or([f.stroke.weight; 4]) } else { [0.0; 4] };
-    let [pt, pr, pb, pl] = al.padding.map(|p| finite_or_zero(p).max(0.0));
-    let [st, sr, sb, sl] = stroke.map(|w| finite_or_zero(w).max(0.0));
-    (pt + st, pr + sr, pb + sb, pl + sl)
+    figcraft_doc::layout_insets(f, al)
 }
 
 /// Where the first child starts and the step between children along the main axis, from the
@@ -326,6 +391,17 @@ pub fn layout_frame(doc: &mut Document, frame: NodeId, m: &dyn Measure) {
     for c in &kids {
         fit_hug_text(doc, *c, m);
         enforce_limits(doc, *c, m);
+    }
+    // Fixed % children take their share of the frame's inner size (not on an axis it hugs).
+    let basis = ((fw - pl - pr).max(0.0), (fh - pt - pb).max(0.0));
+    for c in &kids {
+        let Some(n) = doc.node(*c) else { continue };
+        let (tw, th) = percent_size(&n.child_layout, basis);
+        let (tw, th) = (tw.filter(|_| !hug_w), th.filter(|_| !hug_h));
+        let (w, h) = (tw.unwrap_or(n.width), th.unwrap_or(n.height));
+        if (w - n.width).abs() > 1e-9 || (h - n.height).abs() > 1e-9 {
+            resize_child(doc, *c, w, h, m);
+        }
     }
 
     if matches!(al.mode, LayoutMode::Grid) {
@@ -954,12 +1030,24 @@ pub fn apply_constraints(doc: &mut Document, id: NodeId, ow: f64, oh: f64) {
         // New local size from the bbox change, along the child's own axes (axis-aligned children,
         // turned or flipped, exactly; others approximately, never skewed).
         let (kw, kh) = axis_factors(lin, if bw > 1e-9 { (x1 - x0) / bw } else { 1.0 }, if bh > 1e-9 { (y1 - y0) / bh } else { 1.0 });
-        let (new_w, new_h) = (cw * kw, ch * kh);
+        // Fixed %: the size comes from the parent's new size; the constraint keeps its edge.
+        let (hc, vc) = (n.constraints.horizontal, n.constraints.vertical);
+        let (tw, th) = percent_target(doc, c);
+        let (new_w, new_h) = (tw.unwrap_or(cw * kw), th.unwrap_or(ch * kh));
         let resized = (new_w - cw).abs() > 1e-9 || (new_h - ch).abs() > 1e-9;
         if resized {
             set_size(doc, c, new_w, new_h);
             if let Some(cn) = doc.node_mut(c) {
                 cn.transform = lin;
+            }
+            if tw.is_some() || th.is_some() {
+                let (ow2, oh2) = outer_size(doc, c);
+                if tw.is_some() {
+                    x0 = anchored(x0, x1, ow2, hc == HConstraint::Right, hc == HConstraint::Center);
+                }
+                if th.is_some() {
+                    y0 = anchored(y0, y1, oh2, vc == VConstraint::Bottom, vc == VConstraint::Center);
+                }
             }
         }
         place(doc, c, x0, y0);
@@ -1102,5 +1190,7 @@ mod behaviour_tests;
 mod content_align_tests;
 #[cfg(test)]
 mod nested_tests;
+#[cfg(test)]
+mod percent_tests;
 #[cfg(test)]
 mod tests;
