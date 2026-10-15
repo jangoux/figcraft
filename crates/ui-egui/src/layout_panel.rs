@@ -586,6 +586,10 @@ fn tracks(app: &mut FigApp, ui: &mut Ui, doc: &Document, ids: &[NodeId]) {
     let Some(g) = figcraft_layout::grid_geometry(doc, id) else { return };
     let col = widgets::col_width(ui.available_width());
     for (axis, specs, ranges) in [("columns", &l.column_tracks, &g.columns), ("rows", &l.row_tracks, &g.rows)] {
+        // Responsive columns are all 1fr: their sizes aren't edited one by one.
+        if axis == "columns" && l.column_auto.is_some() {
+            continue;
+        }
         widgets::sublabels(ui, if axis == "columns" { tr("Column sizes") } else { tr("Row sizes") }, None);
         for (i, (a, b)) in ranges.iter().enumerate().take(MAX_TRACK_ROWS) {
             let track = specs.get(i).copied().unwrap_or_default();
