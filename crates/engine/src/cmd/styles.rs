@@ -925,6 +925,8 @@ pub fn apply_bindings_to(doc: &mut Document, only: Option<&std::collections::BTr
         let binds = n.bound.clone();
         // A number bound to the line height reads in the unit the layer's line height is in.
         let line_height = n.kind.text().map_or(figcraft_doc::LineHeight::Auto, |t| t.style.line_height);
+        // And one bound to the font size in rem when the size was set in rem.
+        let size_in_rem = n.kind.text().is_some_and(|t| t.style.rem(doc.root_font_size()).is_some());
         let mut sets = serde_json::Map::new();
         let mut effect_sets: Vec<(usize, String, VariableValue)> = Vec::new();
         let mut paint_sets: Vec<(bool, usize, Option<usize>, Color)> = Vec::new();
@@ -962,6 +964,7 @@ pub fn apply_bindings_to(doc: &mut Document, only: Option<&std::collections::BTr
                 VariableValue::Number(x) if field == "arcSweep" => json!(x * 3.6),
                 VariableValue::Number(x) if field == "arcInner" => json!(x / 100.0),
                 VariableValue::Number(x) if field == "characters" => json!(trim_num(*x)),
+                VariableValue::Number(x) if field == "fontSize" && size_in_rem => json!(format!("{x}rem")),
                 VariableValue::Number(x) if field == "lineHeight" => serde_json::to_value(line_height.with_value(*x)).unwrap_or(Value::Null),
                 VariableValue::Number(x) => json!(x),
                 VariableValue::String(x) => json!(x),

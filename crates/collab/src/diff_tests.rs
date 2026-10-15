@@ -139,8 +139,10 @@ fn document_level_data_round_trips() {
     b.images.insert("hash".into(), ImageData { bytes: Arc::new(vec![1, 2, 3, 250]), width: 2, height: 1 });
     let snap = DevSnapshot { nodes: vec![Arc::new(b.node(kids[0]).unwrap().clone())] };
     b.dev_snapshots.insert(kids[0], Arc::new(snap));
+    b.root_font_size = 20.0;
     let changes = round_trip(&a, &b);
     assert!(changes.contains(&Change::SetDoc { prop: DocProp::Name, value: Json::of("Renamed").unwrap() }));
+    assert!(changes.contains(&Change::SetDoc { prop: DocProp::RootFontSize, value: Json::of(&20.0).unwrap() }));
     let a2 = diff(&a, &b).unwrap().replica;
     // Edit one style, remove one, reorder: per-entry changes plus the order.
     let mut c = b.clone();

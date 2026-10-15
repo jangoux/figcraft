@@ -20,7 +20,7 @@ mainAlign (min|center|max, or the auto gaps spaceBetween|spaceAround|spaceEvenly
 columnGap / rowGap (aliases of gap / crossGap), gridColumns, gridRows, columnTracks / rowTracks ([120 | \"1fr\" | \"auto\" | {sizing, value}]), \
 gridColumn / gridRow (0-based cell anchor, null = auto), gridColumnSpan, gridRowSpan, gridAlignH / gridAlignV (a grid child's alignment in its cell: min|center|max, auto/null = the frame's), sizingH / sizingV (fixed|hug|fill), \
 absolute (ignore auto layout; follows constraints), minWidth, maxWidth, minHeight, maxHeight (null removes), constraints {horizontal, vertical}, grids, exports, characters, fontFamily, fontStyle, \
-fontSize, lineHeight (auto|px|\"150%\"|\"1.5x\"), letterSpacing (px|\"2%\"), textAlign (left|center|right|justified), textAlignVertical, textAutoResize \
+fontSize (px|\"1.5rem\"), lineHeight (auto|px|\"150%\"|\"1.5x\"), letterSpacing (px|\"2%\"), textAlign (left|center|right|justified), textAlignVertical, textAutoResize \
 (widthAndHeight|height|none|truncate), textDecoration, textDecorationStyle (solid|dotted|wavy), textDecorationThickness / textDecorationOffset \
 (auto|px|\"10%\" of the font size; the offset runs from the baseline down to an underline's top edge), textDecorationSkipInk (underlines break around descenders), \
 textDecorationColor (colour, or auto/null: the text's), textCase (original|upper|lower|title|smallCaps), paragraphSpacing, paragraphIndent, \
@@ -108,6 +108,31 @@ pub(crate) fn line_height(v: &Value) -> Option<LineHeight> {
         LineHeight::Pixels(x) | LineHeight::Percent(x) | LineHeight::Multiplier(x) => {
             x.is_finite().then(|| lh.with_value(x.clamp(-100_000.0, 100_000.0)))
         }
+    }
+}
+
+/// A font size as given: pixels, or rem of the file's root font size.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum FontSize {
+    Px(f64),
+    Rem(f64),
+}
+
+/// A number or `"24px"` (pixels), or `"1.5rem"`; only finite, positive sizes.
+pub(crate) fn font_size(v: &Value) -> Option<FontSize> {
+    let size = match v {
+        Value::String(s) => {
+            let s = s.trim();
+            match s.get(s.len().saturating_sub(3)..).filter(|u| u.eq_ignore_ascii_case("rem")) {
+                Some(_) => FontSize::Rem(s.get(..s.len() - 3)?.trim().parse().ok()?),
+                None => FontSize::Px(s.strip_suffix("px").unwrap_or(s).trim().parse().ok()?),
+            }
+        }
+        other => FontSize::Px(f64_of(other)?),
+    };
+    match size {
+        FontSize::Px(x) | FontSize::Rem(x) if x.is_finite() && x > 0.0 => Some(size),
+        _ => None,
     }
 }
 
@@ -629,10 +654,11 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
             | "textDecorationOffset"
             | "textDecorationSkipInk"
             | "textDecorationColor" => {
+                let root = doc.root_font_size();
                 let n = doc.get_mut(id)?;
                 let t = text_mut(cmd, n)?;
                 let (start, end) = range_of(props, t.char_count());
-                apply_text_style(cmd, t, start, end, k, v)?;
+                apply_text_style(cmd, t, start, end, k, v, root)?;
             }
             "textAlign" | "textAlignHorizontal" => {
                 text_mut(cmd, doc.get_mut(id)?)?.align_h = enum_of(v).ok_or_else(|| bad(cmd, "textAlign: left|center|right|justified"))?
@@ -844,7 +870,8 @@ fn range_of(props: &Map<String, Value>, len: usize) -> (usize, usize) {
 }
 
 /// Set one text style property on chars `start..end`.
-pub fn apply_text_style(cmd: &str, t: &mut TextData, start: usize, end: usize, k: &str, v: &Value) -> Result<()> {
+/// `root`: the file's pixels per rem, for font sizes given in rem.
+pub fn apply_text_style(cmd: &str, t: &mut TextData, start: usize, end: usize, k: &str, v: &Value, root: f64) -> Result<()> {
     match k {
         "fontFamily" => {
             let fam = string_val(v).ok_or_else(|| bad(cmd, "`fontFamily` must be a string"))?;
@@ -884,10 +911,13 @@ pub fn apply_text_style(cmd: &str, t: &mut TextData, start: usize, end: usize, k
                 }
             });
         }
-        "fontSize" => {
-            let sz = f64_of(v).ok_or_else(|| bad(cmd, "`fontSize` must be a number"))?.clamp(1.0, 5000.0);
-            t.restyle(start, end, |s| s.font_size = sz);
-        }
+        "fontSize" => match font_size(v).ok_or_else(|| bad(cmd, "fontSize: px or \"1.5rem\""))? {
+            FontSize::Px(px) => t.restyle(start, end, |s| {
+                s.font_size = px.clamp(1.0, 5000.0);
+                s.font_size_rem = None;
+            }),
+            FontSize::Rem(r) => t.restyle(start, end, |s| s.set_rem(r, root)),
+        },
         "lineHeight" => {
             let lh = line_height(v).ok_or_else(|| bad(cmd, "lineHeight: auto | px | \"150%\" | \"1.5x\""))?;
             t.restyle(start, end, |s| s.line_height = lh);

@@ -17,6 +17,7 @@ use crate::icons::{self, Icon};
 use crate::right::{common, menu_item, menu_popup, row};
 use crate::theme::{Tokens, regular, semibold};
 use crate::widgets::{self, FIELD_H, FieldEdit, Lead, PAD};
+use figcraft_engine::codegen::rem_num;
 
 /// Font sizes offered by the size dropdown.
 const SIZES: [f64; 15] = [10.0, 11.0, 12.0, 13.0, 14.0, 16.0, 20.0, 24.0, 32.0, 36.0, 40.0, 48.0, 64.0, 96.0, 128.0];
@@ -102,7 +103,7 @@ pub fn typography(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId])
     // A text style: its chip stands for the font rows (they show again when the chars differ).
     crate::style_picker::chip(app, ui, doc, &ids, crate::style_picker::StyleSlot::Text);
     if !matches!(crate::style_picker::text_link(app, doc, &ids), Some(Some(_))) {
-        font_rows(app, ui, &ids, &styles, editing, &apply_style);
+        font_rows(app, ui, &ids, &styles, editing, doc.root_font_size(), &apply_style);
     }
     paragraph_rows(app, ui, doc, &ids, &styles, &apply_style);
     path_row(app, ui, doc, sel, &ids);
@@ -170,7 +171,16 @@ fn text_style_params(ids: &[NodeId], range: Option<(NodeId, usize, usize)>, mut 
 }
 
 /// The font rows: family, style and size, line height and letter spacing.
-fn font_rows(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], styles: &[TextStyle], editing: bool, apply_style: &dyn Fn(&mut FigApp, &str, Value)) {
+/// `root`: the file's pixels per rem (sizes set in rem show and edit in rem).
+fn font_rows(
+    app: &mut FigApp,
+    ui: &mut Ui,
+    ids: &[NodeId],
+    styles: &[TextStyle],
+    editing: bool,
+    root: f64,
+    apply_style: &dyn Fn(&mut FigApp, &str, Value),
+) {
     let t = Tokens::get(ui.ctx());
     let range = figcraft_engine::textedit::selected_range(&app.session);
 
@@ -217,29 +227,46 @@ fn font_rows(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], styles: &[TextStyle]
             None => widgets::label(ui, tr("Pick one font family first"), t.text_tertiary),
         });
         let size = uniform(styles, |s| s.font_size);
+        // Sizes set in rem show and edit in rem.
+        let in_rem = !styles.is_empty() && styles.iter().all(|s| s.rem(root).is_some());
+        let (shown, suffix) = if in_rem { (size.map(|px| px / root), "rem") } else { (size, "") };
+        // A typed or scrubbed value in the field's unit → the `fontSize` value.
+        let value = |v: f64| if in_rem { json!(format!("{}rem", rem_num(v.clamp(1.0 / root, 5000.0 / root)))) } else { json!(v.clamp(1.0, 5000.0)) };
         ui.spacing_mut().item_spacing.x = 0.0;
         // The whole layer's size can follow a variable; a selected range just takes a value.
         let e = if editing {
-            widgets::number_field(ui, Id::new("ty_size"), Lead::None, size, "", half - 20.0, 1.0)
+            widgets::number_field(ui, Id::new("ty_size"), Lead::None, shown, suffix, half - 20.0, if in_rem { 0.125 } else { 1.0 })
         } else {
-            crate::variable_ui::number_field(app, ui, ids, "fontSize", Id::new("ty_size"), Lead::None, size, "", half - 20.0)
+            crate::variable_ui::number_field(app, ui, ids, "fontSize", Id::new("ty_size"), Lead::None, shown, suffix, half - 20.0)
         };
         match e {
-            Some(FieldEdit::Set(v)) => apply_style(app, "fontSize", json!(v.clamp(1.0, 5000.0))),
+            Some(FieldEdit::Set(v)) => apply_style(app, "fontSize", value(v)),
             // The text editing session already groups undo; just apply.
-            Some(FieldEdit::Scrub(v, _)) if editing => apply_style(app, "fontSize", json!(v.clamp(1.0, 5000.0))),
-            Some(FieldEdit::Scrub(v, done)) => {
-                live(app, "Font size", "node.set", json!({"ids": ids, "props": {"fontSize": v.clamp(1.0, 5000.0)}}), done)
-            }
+            Some(FieldEdit::Scrub(v, _)) if editing => apply_style(app, "fontSize", value(v)),
+            Some(FieldEdit::Scrub(v, done)) => live(app, "Font size", "node.set", json!({"ids": ids, "props": {"fontSize": value(v)}}), done),
             None => {}
         }
         let more = icons::button(ui, Icon::Chevron, 20.0, false, tr("Font size"));
         menu_popup(&more).width(90.0).show(|ui| {
+            // The unit: pixels, or rem of the file's root font size (same size either way).
+            for (rem, label) in [(false, "px"), (true, "rem")] {
+                let mark = if in_rem == rem { "✓ " } else { "   " };
+                if menu_item(ui, &format!("{mark}{label}"), "") {
+                    if in_rem != rem
+                        && let Some(px) = size
+                    {
+                        apply_style(app, "fontSize", if rem { json!(format!("{}rem", rem_num(px / root))) } else { json!(px) });
+                    }
+                    ui.close();
+                }
+            }
+            ui.separator();
             egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
                 for v in SIZES {
                     let mark = if size == Some(v) { "✓ " } else { "   " };
-                    if menu_item(ui, &format!("{mark}{}", trim_num(v)), "") {
-                        apply_style(app, "fontSize", json!(v));
+                    let label = if in_rem { format!("{mark}{}rem", rem_num(v / root)) } else { format!("{mark}{}", trim_num(v)) };
+                    if menu_item(ui, &label, "") {
+                        apply_style(app, "fontSize", if in_rem { json!(format!("{}rem", rem_num(v / root))) } else { json!(v) });
                         ui.close();
                     }
                 }

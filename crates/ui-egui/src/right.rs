@@ -431,6 +431,20 @@ fn page_section(app: &mut FigApp, ui: &mut Ui, doc: &Document) {
         });
     });
     widgets::separator(ui);
+    // Pixels per rem, for font sizes set in rem.
+    widgets::section_header(ui, tr("Root font size"), &[], false);
+    row(ui, 32.0, |ui| {
+        let root = doc.root_font_size();
+        if let Some(FieldEdit::Set(v) | FieldEdit::Scrub(v, true)) =
+            widgets::number_field(ui, Id::new("root_font_size"), Lead::None, Some(root), "px", 96.0, 1.0)
+            && v.is_finite()
+            && (v - root).abs() > 1e-9
+        {
+            app.run("file.rootFontSize", json!({"size": v.clamp(1.0, 1000.0)}));
+        }
+        widgets::label(ui, tr("1 rem"), t.text_tertiary);
+    });
+    widgets::separator(ui);
     // Local variables & styles.
     let vars = doc.variables.variables.iter().filter(|v| !figcraft_engine::library::is_remote_variable(doc, &v.id)).count();
     widgets::section_header(ui, tr("Local variables"), &[], vars == 0);

@@ -18,7 +18,7 @@ pub fn specs() -> Vec<CommandSpec> {
     vec![spec!(
         "inspect.code",
         "Code for layer",
-        "{id?, language?: css|html|react|leptos|swiftui|compose (default css; html, react and leptos are the whole layer tree; components take their properties as parameters, instances pass their values; a component connected to code (codeConnect.set) gives its import and snippet instead), unit?: px|rem (CSS, HTML, React and Leptos; default px), rootFontSize? (rem: pixels per rem, default 16)} → {code, language, connected}",
+        "{id?, language?: css|html|react|leptos|swiftui|compose (default css; html, react and leptos are the whole layer tree; components take their properties as parameters, instances pass their values; a component connected to code (codeConnect.set) gives its import and snippet instead), unit?: px|rem (CSS, HTML, React and Leptos; default px), rootFontSize? (rem: pixels per rem, default the file's root font size)} → {code, language, connected}",
         false,
         |s, p| {
             let cmd = "inspect.code";
@@ -27,9 +27,10 @@ pub fn specs() -> Vec<CommandSpec> {
                 Some(l) => CodeLang::from_id(&l).ok_or_else(|| bad(cmd, "language: css|html|react|leptos|swiftui|compose"))?,
                 None => CodeLang::Css,
             };
+            let root = s.doc()?.root_font_size();
             let rem = match string(p, "unit").map(|u| u.to_ascii_lowercase()).as_deref() {
                 None | Some("px") => None,
-                Some("rem") => Some(num_or(p, "rootFontSize", 16.0)).filter(|r| r.is_finite() && *r > 0.0 && *r <= 1000.0),
+                Some("rem") => Some(num_or(p, "rootFontSize", root)).filter(|r| r.is_finite() && *r > 0.0 && *r <= 1000.0),
                 Some(_) => return Err(bad(cmd, "unit: px|rem")),
             };
             if string(p, "unit").is_some_and(|u| u.eq_ignore_ascii_case("rem")) && rem.is_none() {
@@ -110,6 +111,12 @@ pub(crate) fn num(v: f64) -> String {
     }
     let r = (v * 100.0).round() / 100.0;
     if (r - r.round()).abs() < 1e-9 { format!("{}", r.round() as i64) } else { format!("{r}") }
+}
+
+/// A rem value to 4 decimals without trailing zeros (0.875, not 0.88).
+pub fn rem_num(v: f64) -> String {
+    let r = (v * 10_000.0).round() / 10_000.0;
+    if r.is_finite() { format!("{r}") } else { "0".into() }
 }
 
 /// `code` with every pixel length (`12px`) in rem of `root` pixels (`0.75rem`); names that end
@@ -436,7 +443,12 @@ pub(crate) fn css_decls(doc: &Document, n: &Node, t: &mut Tokens, hug: (bool, bo
     if let NodeKind::Text(tx) = &n.kind {
         let s = &tx.style;
         put("font-family", tok(doc, n, &["fontFamily"], format!("\"{}\"", s.font_family.replace('"', "'")), t));
-        put("font-size", tok(doc, n, &["fontSize"], px(s.font_size), t));
+        // A size set in rem stays in rem.
+        let size = match s.rem(doc.root_font_size()) {
+            Some(r) => format!("{}rem", rem_num(r)),
+            None => px(s.font_size),
+        };
+        put("font-size", tok(doc, n, &["fontSize"], size, t));
         put("font-weight", s.weight().to_string());
         if s.italic() {
             put("font-style", "italic".into());

@@ -1455,6 +1455,8 @@ mod fig_export_tests;
 #[cfg(test)]
 mod fig_import_tests;
 #[cfg(test)]
+mod font_size_rem_tests;
+#[cfg(test)]
 mod frame_guides_tests;
 #[cfg(test)]
 mod frame_label_tests;

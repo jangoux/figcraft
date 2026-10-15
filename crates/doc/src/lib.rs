@@ -197,6 +197,21 @@ pub struct Document {
     /// [`handoff`]).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub dev_snapshots: BTreeMap<NodeId, Arc<DevSnapshot>>,
+    /// Pixels per rem for font sizes typed in rem (see [`root_font_size`](Self::root_font_size)).
+    #[serde(default = "default_root_font_size", skip_serializing_if = "is_default_root_font_size")]
+    pub root_font_size: f64,
+}
+
+/// The root font size of a new file, as in browsers.
+pub const DEFAULT_ROOT_FONT_SIZE: f64 = 16.0;
+
+fn default_root_font_size() -> f64 {
+    DEFAULT_ROOT_FONT_SIZE
+}
+
+#[allow(clippy::float_cmp, clippy::trivially_copy_pass_by_ref)]
+fn is_default_root_font_size(v: &f64) -> bool {
+    *v == DEFAULT_ROOT_FONT_SIZE
 }
 
 impl Default for Document {
@@ -212,6 +227,11 @@ impl Document {
         let p = doc.add_page("Page 1");
         doc.current_page = Some(p);
         doc
+    }
+
+    /// Pixels per rem: the file's root font size, 16 when it isn't a sane size (1–1000 px).
+    pub fn root_font_size(&self) -> f64 {
+        Some(self.root_font_size).filter(|r| r.is_finite() && (1.0..=1000.0).contains(r)).unwrap_or(DEFAULT_ROOT_FONT_SIZE)
     }
 
     /// A document with no pages at all: not a valid file on its own (see [`repair`](Self::repair)),
@@ -235,6 +255,7 @@ impl Document {
             image_presets: Vec::new(),
             annotation_categories: None,
             dev_snapshots: BTreeMap::new(),
+            root_font_size: DEFAULT_ROOT_FONT_SIZE,
         }
     }
 
