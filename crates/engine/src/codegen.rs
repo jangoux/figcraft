@@ -443,7 +443,9 @@ pub(crate) fn css_decls(doc: &Document, n: &Node, t: &mut Tokens, hug: (bool, bo
         }
         match s.line_height {
             LineHeight::Pixels(v) => put("line-height", tok(doc, n, &["lineHeight"], px(v), t)),
-            LineHeight::Percent(p) => put("line-height", format!("{}%", num(p))),
+            LineHeight::Percent(p) => put("line-height", tok(doc, n, &["lineHeight"], format!("{}%", num(p)), t)),
+            // Unitless: inherited as the factor, so each child's own size counts.
+            LineHeight::Multiplier(m) => put("line-height", tok(doc, n, &["lineHeight"], num(m), t)),
             LineHeight::Auto => {}
         }
         match s.letter_spacing {
@@ -475,6 +477,7 @@ pub(crate) fn css_decls(doc: &Document, n: &Node, t: &mut Tokens, hug: (bool, bo
                 LineHeight::Auto => None,
                 LineHeight::Pixels(v) => Some(px(v)),
                 LineHeight::Percent(p) => Some(format!("{}%", num(p))),
+                LineHeight::Multiplier(m) => Some(format!("{}em", num(m))),
             };
             match l.style {
                 figcraft_doc::DecorationStyle::Solid => {}

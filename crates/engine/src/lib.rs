@@ -1483,6 +1483,8 @@ mod keymap_tests;
 #[cfg(test)]
 mod library_variables_tests;
 #[cfg(test)]
+mod line_height_unit_tests;
+#[cfg(test)]
 mod live_access_tests;
 #[cfg(test)]
 mod live_docs_tests;

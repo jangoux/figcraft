@@ -163,7 +163,8 @@ Or in a project's `.mcp.json`:
   `image.savePreset {name, filters?}` saves the current (or given) adjustments in the file,
   `image.deletePreset {name}` removes one and `image.presets` lists both kinds.
 - Text props (`fontFamily`, `fontStyle`, `fontSize`, `lineHeight`, `letterSpacing`, `textDecoration`,
-  `textCase`, `textFills`, `fontVariations`…) apply to the whole layer, or to chars `start`..`end`
+  `textCase`, `textFills`, `fontVariations`…; `lineHeight`: `"auto"`, px, `"150%"` of the font
+  size or a unitless `"1.5x"`) apply to the whole layer, or to chars `start`..`end`
   when given (`text.style {id, start, end, …}` does the same). Styled ranges come back as
   `styledRuns`. Variable fonts: `fontVariations` (alias `variationSettings`) sets axis values in
   user units, e.g. `{"wght": 550, "wdth": 85}` (`null` = back to what the style name implies);
@@ -1287,7 +1288,10 @@ unbinds): `fill` or `fills/<i>/color` and `fills/<i>/stops/<j>/color` on a paint
 `effects/<i>/<color|radius|spread|offsetX|offsetY|startRadius>` on an effect style,
 `layoutGrids/<i>/<size|count|gutter|offset>` on a grid style, `fontSize`, `lineHeight`,
 `letterSpacing`, `fontFamily`, `fontStyle` on a text style. Each layer using the style shows the
-field in its own modes and stays linked; `style.list` gives a style's `bound` map.
+field in its own modes and stays linked; `style.list` gives a style's `bound` map. A number bound
+to `lineHeight` (a layer's or a style's) reads in the unit the line height is in: pixels (also
+from Auto), `150` → `150%`, `1.5` → `1.5x`; setting `lineHeight` to `"0%"` or `"0x"` switches the
+unit and keeps the binding.
 
 `effect.add {ids?, type? | effect?}` adds an effect (`dropShadow`, `innerShadow`, `layerBlur`,
 `backgroundBlur`, `noise`, `texture`, `glass`) with its defaults, or the full `effect` object;

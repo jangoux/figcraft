@@ -10,7 +10,11 @@ pub enum LineHeight {
     #[default]
     Auto,
     Pixels(f64),
+    /// A share of the font size, as Figma's percent: each run's own size (`150` = 1.5 × size).
     Percent(f64),
+    /// A unitless multiplier of the font size (CSS `line-height: 1.5`); resolves per run like
+    /// [`Percent`](Self::Percent), but stays unitless in code and in bound variables.
+    Multiplier(f64),
 }
 
 impl LineHeight {
@@ -20,6 +24,7 @@ impl LineHeight {
             LineHeight::Auto => font_size * natural_ratio,
             LineHeight::Pixels(v) => v.max(0.0),
             LineHeight::Percent(p) => font_size * p.max(0.0) / 100.0,
+            LineHeight::Multiplier(m) => font_size * m.max(0.0),
         }
     }
     pub fn label(self) -> String {
@@ -27,6 +32,16 @@ impl LineHeight {
             LineHeight::Auto => "Auto".into(),
             LineHeight::Pixels(v) => trim_num(v),
             LineHeight::Percent(p) => format!("{}%", trim_num(p)),
+            LineHeight::Multiplier(m) => format!("{}×", trim_num(m)),
+        }
+    }
+    /// The same unit holding `v` (a number variable bound to the field reads in the field's
+    /// unit; `Auto` reads as pixels).
+    pub fn with_value(self, v: f64) -> Self {
+        match self {
+            LineHeight::Percent(_) => LineHeight::Percent(v),
+            LineHeight::Multiplier(_) => LineHeight::Multiplier(v),
+            LineHeight::Auto | LineHeight::Pixels(_) => LineHeight::Pixels(v),
         }
     }
 }

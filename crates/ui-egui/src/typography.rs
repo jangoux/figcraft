@@ -252,7 +252,7 @@ fn font_rows(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], styles: &[TextStyle]
         let lh = uniform(styles, |s| s.line_height);
         let lh_label = lh.map(|l| l.label()).unwrap_or_else(|| tr(MIXED).into());
         let field = SpacingField { field: "lineHeight", id: Id::new("ty_lh"), glyph: LeadGlyph::LineHeight, tip: tr("Line height") };
-        if let Some(v) = spacing_field(app, ui, ids, &field, &lh_label, half, editing)
+        if let Some(v) = spacing_field(app, ui, ids, &field, &lh_label, half, editing, Some(lh))
             && let Some(v) = parse_line_height(&v, lh)
         {
             apply_style(app, "lineHeight", v);
@@ -260,7 +260,7 @@ fn font_rows(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], styles: &[TextStyle]
         let ls = uniform(styles, |s| s.letter_spacing);
         let ls_label = ls.map(|l| l.label()).unwrap_or_else(|| tr(MIXED).into());
         let field = SpacingField { field: "letterSpacing", id: Id::new("ty_ls"), glyph: LeadGlyph::LetterSpacing, tip: tr("Letter spacing") };
-        if let Some(v) = spacing_field(app, ui, ids, &field, &ls_label, half, editing)
+        if let Some(v) = spacing_field(app, ui, ids, &field, &ls_label, half, editing, None)
             && let Some(v) = parse_letter_spacing(&v, ls)
         {
             apply_style(app, "letterSpacing", v);
@@ -563,7 +563,7 @@ fn decoration_details(app: &mut FigApp, ui: &mut Ui, styles: &[TextStyle], apply
         field_row(ui, label, |ui, fw| {
             let (shown, empty) = match value {
                 Some(DecorationLength::Pixels(v)) => (Some(v), String::new()),
-                Some(DecorationLength::Percent(p)) => (None, format!("{}%", trim_num(p))),
+                Some(l @ (DecorationLength::Percent(_) | DecorationLength::Multiplier(_))) => (None, l.label()),
                 Some(DecorationLength::Auto) => (None, tr("Auto").to_string()),
                 None => (None, tr(MIXED).to_string()),
             };
@@ -916,13 +916,30 @@ struct SpacingField {
     tip: &'static str,
 }
 
-/// A spacing field that whole layers can bind to a number variable (in pixels): the variable's
-/// chip when bound, else the editable field with a variable button on hover. While a text range is
-/// selected it only takes values. Returns the typed text.
-fn spacing_field(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], f: &SpacingField, value: &str, width: f32, range: bool) -> Option<String> {
+/// A spacing field that whole layers can bind to a number variable: the variable's chip when
+/// bound, else the editable field with a variable button on hover. While a text range is selected
+/// it only takes values. `unit` (the line height: its current unit, `None` when mixed) adds a
+/// unit menu beside the chip, since the variable's number reads in the field's unit. Returns the
+/// typed text.
+#[allow(clippy::too_many_arguments)]
+fn spacing_field(
+    app: &mut FigApp,
+    ui: &mut Ui,
+    ids: &[NodeId],
+    f: &SpacingField,
+    value: &str,
+    width: f32,
+    range: bool,
+    unit: Option<Option<LineHeight>>,
+) -> Option<String> {
     let rect = Rect::from_min_size(ui.cursor().min, vec2(width, FIELD_H));
-    if !range && crate::variable_ui::bound_chip(app, ui, ids, f.field, VariableType::Number, rect) {
+    let unit_w = if unit.is_some() { 30.0 } else { 0.0 };
+    let chip = Rect::from_min_max(rect.min, pos2(rect.max.x - unit_w, rect.max.y));
+    if !range && crate::variable_ui::bound_chip(app, ui, ids, f.field, VariableType::Number, chip) {
         ui.allocate_rect(rect, Sense::hover());
+        if let Some(cur) = unit {
+            line_height_unit(app, ui, ids, Rect::from_min_max(pos2(chip.max.x + 2.0, rect.min.y), rect.max), cur);
+        }
         return None;
     }
     let out = lead_field(ui, f.id, f.glyph, value, width, f.tip);
@@ -930,6 +947,34 @@ fn spacing_field(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], f: &SpacingField
         crate::variable_ui::bind_button(ui, rect, ids, f.field, VariableType::Number);
     }
     out
+}
+
+/// The unit a bound line height reads its variable in: px, % of the font size, or × the font
+/// size. Picking one keeps the binding (the variable's number is read again in the new unit).
+fn line_height_unit(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], rect: Rect, cur: Option<LineHeight>) {
+    let t = Tokens::get(ui.ctx());
+    let units = [("px", tr("Pixels"), json!(0.0)), ("%", tr("Percent of font size"), json!("0%")), ("×", tr("Multiplier of font size"), json!("0x"))];
+    let active = match cur {
+        Some(LineHeight::Percent(_)) => Some(1),
+        Some(LineHeight::Multiplier(_)) => Some(2),
+        Some(LineHeight::Pixels(_) | LineHeight::Auto) => Some(0),
+        None => None,
+    };
+    let tip = tr("Unit the variable is read in");
+    let resp = ui.interact(rect, Id::new(("ty_lh_unit", ids)), Sense::click()).on_hover_text(tip);
+    let label = active.and_then(|i| units.get(i)).map_or("–", |u| u.0);
+    crate::a11y::text(&resp, tip, label);
+    ui.painter().rect_filled(rect, CornerRadius::same(5), if resp.hovered() { t.hover } else { t.field });
+    ui.painter().text(rect.center(), Align2::CENTER_CENTER, label, regular(11.0), t.text);
+    menu_popup(&resp).width(170.0).show(|ui| {
+        for (i, (sym, name, v)) in units.iter().enumerate() {
+            let mark = if active == Some(i) { "✓ " } else { "   " };
+            if menu_item(ui, &format!("{mark}{name}"), sym) {
+                app.set_props(ids, json!({"lineHeight": v}));
+                ui.close();
+            }
+        }
+    });
 }
 
 fn lead_field(ui: &mut Ui, id: Id, glyph: LeadGlyph, value: &str, width: f32, tip: &str) -> Option<String> {
@@ -985,8 +1030,8 @@ fn lead_field(ui: &mut Ui, id: Id, glyph: LeadGlyph, value: &str, width: f32, ti
     out
 }
 
-/// "Auto", "24", "150%" → the `lineHeight` value. A bare number keeps the current unit when it is
-/// a percentage, else means pixels.
+/// "Auto", "24", "150%", "1.5x" → the `lineHeight` value. A bare number keeps the current unit
+/// when it is a percentage or a multiplier, else means pixels.
 pub(crate) fn parse_line_height(s: &str, cur: Option<LineHeight>) -> Option<Value> {
     let s = s.trim();
     if s.is_empty() || s.eq_ignore_ascii_case("auto") {
@@ -1002,8 +1047,17 @@ pub(crate) fn parse_line_height(s: &str, cur: Option<LineHeight>) -> Option<Valu
     if let Some(px) = s.strip_suffix("px") {
         return widgets::eval(px.trim(), None).filter(|v| v.is_finite()).map(|v| json!(v.max(0.0)));
     }
+    let times = |v: f64| json!(format!("{}x", trim_num(v.max(0.0))));
+    if let Some(m) = s.strip_suffix(['x', 'X', '×']) {
+        let cur_m = match cur {
+            Some(LineHeight::Multiplier(m)) => Some(m),
+            _ => None,
+        };
+        return widgets::eval(m.trim(), cur_m).filter(|v| v.is_finite()).map(times);
+    }
     match cur {
         Some(LineHeight::Percent(p)) => widgets::eval(s, Some(p)).filter(|v| v.is_finite()).map(|v| json!(format!("{}%", trim_num(v.max(0.0))))),
+        Some(LineHeight::Multiplier(m)) => widgets::eval(s, Some(m)).filter(|v| v.is_finite()).map(times),
         Some(LineHeight::Pixels(px)) => widgets::eval(s, Some(px)).filter(|v| v.is_finite()).map(|v| json!(v.max(0.0))),
         _ => widgets::eval(s, None).filter(|v| v.is_finite()).map(|v| json!(v.max(0.0))),
     }
@@ -1146,6 +1200,10 @@ mod tests {
         assert_eq!(parse_line_height("130", Some(LineHeight::Percent(120.0))), Some(json!("130%")));
         assert_eq!(parse_line_height("-5", Some(LineHeight::Pixels(10.0))), Some(json!(0.0)));
         assert_eq!(parse_line_height("abc", None), None);
+        assert_eq!(parse_line_height("1.5x", Some(LineHeight::Pixels(20.0))), Some(json!("1.5x")));
+        assert_eq!(parse_line_height("1.6", Some(LineHeight::Multiplier(1.5))), Some(json!("1.6x")));
+        assert_eq!(parse_line_height("+0.1", Some(LineHeight::Multiplier(1.5))), Some(json!("1.6x")));
+        assert_eq!(parse_line_height("150%", Some(LineHeight::Multiplier(1.5))), Some(json!("150%")));
         assert_eq!(parse_letter_spacing("2%", None), Some(json!("2%")));
         assert_eq!(parse_letter_spacing("1.5px", None), Some(json!(1.5)));
         assert_eq!(parse_letter_spacing("-1", None), Some(json!("-1%")));

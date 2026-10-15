@@ -97,7 +97,10 @@ fn resolved(vars: &Variables, st: &Style, modes: &Modes) -> StyleKind {
 fn set_text_field(style: &mut TextStyle, key: &str, val: &VariableValue) {
     match (key, val) {
         ("fontSize", VariableValue::Number(x)) if x.is_finite() => style.font_size = x.clamp(1.0, 5000.0),
-        ("lineHeight", VariableValue::Number(x)) if x.is_finite() => style.line_height = LineHeight::Pixels(x.clamp(0.0, 100_000.0)),
+        ("lineHeight", VariableValue::Number(x)) if x.is_finite() => {
+            // In the unit the style's line height is in.
+            style.line_height = style.line_height.with_value(x.clamp(0.0, 100_000.0));
+        }
         ("letterSpacing", VariableValue::Number(x)) if x.is_finite() => style.letter_spacing = LetterSpacing::Pixels(x.clamp(-10_000.0, 10_000.0)),
         ("fontFamily", VariableValue::String(f)) if !f.trim().is_empty() => style.font_family = f.clone(),
         ("fontStyle", VariableValue::String(f)) if !f.trim().is_empty() => style.font_style = f.clone(),

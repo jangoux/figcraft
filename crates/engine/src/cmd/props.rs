@@ -20,7 +20,7 @@ mainAlign (min|center|max, or the auto gaps spaceBetween|spaceAround|spaceEvenly
 columnGap / rowGap (aliases of gap / crossGap), gridColumns, gridRows, columnTracks / rowTracks ([120 | \"1fr\" | \"auto\" | {sizing, value}]), \
 gridColumn / gridRow (0-based cell anchor, null = auto), gridColumnSpan, gridRowSpan, gridAlignH / gridAlignV (a grid child's alignment in its cell: min|center|max, auto/null = the frame's), sizingH / sizingV (fixed|hug|fill), \
 absolute (ignore auto layout; follows constraints), minWidth, maxWidth, minHeight, maxHeight (null removes), constraints {horizontal, vertical}, grids, exports, characters, fontFamily, fontStyle, \
-fontSize, lineHeight (auto|px|\"150%\"), letterSpacing (px|\"2%\"), textAlign (left|center|right|justified), textAlignVertical, textAutoResize \
+fontSize, lineHeight (auto|px|\"150%\"|\"1.5x\"), letterSpacing (px|\"2%\"), textAlign (left|center|right|justified), textAlignVertical, textAutoResize \
 (widthAndHeight|height|none|truncate), textDecoration, textDecorationStyle (solid|dotted|wavy), textDecorationThickness / textDecorationOffset \
 (auto|px|\"10%\" of the font size; the offset runs from the baseline down to an underline's top edge), textDecorationSkipInk (underlines break around descenders), \
 textDecorationColor (colour, or auto/null: the text's), textCase (original|upper|lower|title|smallCaps), paragraphSpacing, paragraphIndent, \
@@ -92,12 +92,22 @@ pub(crate) fn sizing(v: &Value) -> Option<Sizing> {
     }
 }
 
+/// `"auto"`, px, `"150%"` (a share of the font size) or `"1.5x"` / `"1.5×"` (a unitless
+/// multiplier); non-finite values are refused, the rest clamped to ±100 000.
 pub(crate) fn line_height(v: &Value) -> Option<LineHeight> {
-    match v {
-        Value::String(s) if s.eq_ignore_ascii_case("auto") => Some(LineHeight::Auto),
-        Value::String(s) if s.trim().ends_with('%') => s.trim().trim_end_matches('%').trim().parse().ok().map(LineHeight::Percent),
-        Value::Object(_) => serde_json::from_value(v.clone()).ok(),
-        other => f64_of(other).map(LineHeight::Pixels),
+    let num = |s: &str| s.trim().parse::<f64>().ok();
+    let lh = match v {
+        Value::String(s) if s.trim().eq_ignore_ascii_case("auto") => LineHeight::Auto,
+        Value::String(s) if s.trim().ends_with('%') => LineHeight::Percent(num(s.trim().trim_end_matches('%'))?),
+        Value::String(s) if s.trim().ends_with(['x', 'X', '×']) => LineHeight::Multiplier(num(s.trim().trim_end_matches(['x', 'X', '×']))?),
+        Value::Object(_) => serde_json::from_value(v.clone()).ok()?,
+        other => LineHeight::Pixels(f64_of(other)?),
+    };
+    match lh {
+        LineHeight::Auto => Some(lh),
+        LineHeight::Pixels(x) | LineHeight::Percent(x) | LineHeight::Multiplier(x) => {
+            x.is_finite().then(|| lh.with_value(x.clamp(-100_000.0, 100_000.0)))
+        }
     }
 }
 
@@ -879,7 +889,7 @@ pub fn apply_text_style(cmd: &str, t: &mut TextData, start: usize, end: usize, k
             t.restyle(start, end, |s| s.font_size = sz);
         }
         "lineHeight" => {
-            let lh = line_height(v).ok_or_else(|| bad(cmd, "lineHeight: auto | px | \"150%\""))?;
+            let lh = line_height(v).ok_or_else(|| bad(cmd, "lineHeight: auto | px | \"150%\" | \"1.5x\""))?;
             t.restyle(start, end, |s| s.line_height = lh);
         }
         "letterSpacing" => {
@@ -896,7 +906,7 @@ pub fn apply_text_style(cmd: &str, t: &mut TextData, start: usize, end: usize, k
         }
         "textDecorationThickness" | "textDecorationOffset" => {
             let m = line_height(v)
-                .filter(|m| !matches!(m, LineHeight::Pixels(x) | LineHeight::Percent(x) if !x.is_finite() || x.abs() > 10_000.0))
+                .filter(|m| !matches!(m, LineHeight::Pixels(x) | LineHeight::Percent(x) | LineHeight::Multiplier(x) if x.abs() > 10_000.0))
                 .ok_or_else(|| bad(cmd, format!("{k}: auto | px | \"10%\"")))?;
             let thickness = k == "textDecorationThickness";
             t.restyle(start, end, |s| s.set_look(|l| *if thickness { &mut l.thickness } else { &mut l.offset } = m));
