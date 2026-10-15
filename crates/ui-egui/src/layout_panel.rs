@@ -232,11 +232,30 @@ fn dimensions(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], has
     let (w, h) = (common(doc, sel, w_of), common(doc, sel, h_of));
     let col = widgets::col_width(ui.available_width());
     widgets::sublabels(ui, tr("Dimensions"), None);
+    // Fixed % on every selected layer: the field shows and takes the percentage.
+    let pct_of = |horizontal: bool| {
+        let all =
+            sel.iter().all(|i| doc.node(*i).is_some_and(|n| if horizontal { n.child_layout.percent_w } else { n.child_layout.percent_h }.is_some()));
+        all.then(|| {
+            common(doc, sel, |n| (if horizontal { n.child_layout.percent_w } else { n.child_layout.percent_h }).map(|p| (p * 100.0).round() / 100.0))
+                .flatten()
+        })
+    };
     row(ui, 32.0, |ui| {
-        let e = crate::variable_ui::number_field_mixed(app, ui, &ids, "width", Id::new("lay_w"), Lead::Text("W"), w, "", col);
-        app.field_of(&ids, "width", e, w_of, |v| json!(v.max(0.0)));
-        let e = crate::variable_ui::number_field_mixed(app, ui, &ids, "height", Id::new("lay_h"), Lead::Text("H"), h, "", col);
-        app.field_of(&ids, "height", e, h_of, |v| json!(v.max(0.0)));
+        if let Some(p) = pct_of(true) {
+            let e = widgets::number_field(ui, Id::new("lay_w_pct"), Lead::Text("W"), p, "%", col, 1.0);
+            app.field(&ids, "widthPercent", e, |v| json!(v.max(0.0)));
+        } else {
+            let e = crate::variable_ui::number_field_mixed(app, ui, &ids, "width", Id::new("lay_w"), Lead::Text("W"), w, "", col);
+            app.field_of(&ids, "width", e, w_of, |v| json!(v.max(0.0)));
+        }
+        if let Some(p) = pct_of(false) {
+            let e = widgets::number_field(ui, Id::new("lay_h_pct"), Lead::Text("H"), p, "%", col, 1.0);
+            app.field(&ids, "heightPercent", e, |v| json!(v.max(0.0)));
+        } else {
+            let e = crate::variable_ui::number_field_mixed(app, ui, &ids, "height", Id::new("lay_h"), Lead::Text("H"), h, "", col);
+            app.field_of(&ids, "height", e, h_of, |v| json!(v.max(0.0)));
+        }
         let locked = common(doc, sel, |n| n.constrain_proportions).unwrap_or(false);
         if icons::button(ui, if locked { Icon::LinkOn } else { Icon::LinkOff }, 24.0, locked, tr("Constrain proportions")).clicked() {
             app.set_props(&ids, json!({"constrainProportions": !locked}));
@@ -244,7 +263,9 @@ fn dimensions(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], has
     });
     let parent_al = sel.iter().all(|i| parent_of(doc, *i).is_some_and(|p| p.layout.is_some()));
     let is_text = sel.iter().all(|i| matches!(doc.node(*i).map(|n| &n.kind), Some(NodeKind::Text(_))));
-    if !(has_al || parent_al || is_text) {
+    // Fixed % needs a parent frame to measure (a FigCraft extension, so it shows for any frame's child).
+    let can_percent = sel.iter().all(|i| doc.percent_basis(*i).is_some());
+    if !(has_al || parent_al || is_text || can_percent) {
         return;
     }
     // Min/max apply to auto layout frames and their children; absolute children neither fill nor limit.
@@ -255,11 +276,19 @@ fn dimensions(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], has
         for (ax, axis) in AXES.iter().enumerate() {
             let horizontal = ax == 0;
             let cur = common(doc, sel, |n| if horizontal { n.child_layout.sizing_h } else { n.child_layout.sizing_v });
+            let percent = pct_of(horizontal).is_some();
             let any_limit =
                 sel.iter().filter_map(|i| doc.node(*i)).any(|n| limit(n, horizontal, true).is_some() || limit(n, horizontal, false).is_some());
             // "Fill" here is the sizing (fill the container), not the paint.
-            let label = cur.map(|s| if s == Sizing::Fill { tr("Fill|sizing") } else { tr(s.label()) }).unwrap_or(tr("Mixed"));
+            let label = match cur {
+                // The icon tells it from Fixed (the full name doesn't fit).
+                Some(Sizing::Fixed) if percent => tr("Fixed"),
+                Some(Sizing::Fill) => tr("Fill|sizing"),
+                Some(s) => tr(s.label()),
+                None => tr("Mixed"),
+            };
             let icon = match cur {
+                Some(Sizing::Fixed) if percent => Icon::FixedPercent,
                 Some(Sizing::Hug) => Icon::Hug,
                 Some(Sizing::Fill) => Icon::FillContainer,
                 _ => Icon::Fixed,
@@ -277,6 +306,9 @@ fn dimensions(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], has
             let ids2 = ids.clone();
             menu_popup(&resp).width(200.0).show(|ui| {
                 let mut opts = vec![(tr("Fixed"), "fixed")];
+                if can_percent {
+                    opts.push((tr("Fixed %"), "percent"));
+                }
                 if has_al || is_text {
                     opts.push((tr("Hug contents"), "hug"));
                 }

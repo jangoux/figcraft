@@ -6,6 +6,7 @@
 
 use super::tests::FakeMeasure;
 use super::*;
+use figcraft_doc::StrokeAlign;
 use figcraft_doc::color::{Color, Paint};
 use figcraft_doc::{Constraints, GridTrack, Node, TextData};
 use std::collections::HashMap;

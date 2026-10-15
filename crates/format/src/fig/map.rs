@@ -519,6 +519,8 @@ impl<'a> Mapper<'a> {
         stroke(o, v);
         // A margin wrapper's flag, as the REST API gives plugin data (`{pluginId: {key: value}}`).
         let (pid, key) = super::export::MARGIN;
+        // Fixed % percentages, as the REST API gives plugin data (`{pluginId: {key: value}}`).
+        let (pid, key) = super::export::PERCENT;
         if let Some(value) = v
             .list("pluginData")
             .iter()

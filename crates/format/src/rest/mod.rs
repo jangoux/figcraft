@@ -188,6 +188,7 @@ pub fn import_with(v: &Value, variables: Option<&Value>, images: ImageResolver) 
     cx.styles_take_bindings();
     cx.finish();
     heal_margin_wrappers(&mut cx.doc);
+    settle_percent_sizes(&mut cx.doc);
     let warnings = cx.warnings.finish();
     Ok((cx.doc, warnings))
 }
@@ -200,6 +201,27 @@ fn heal_margin_wrappers(doc: &mut Document) {
         if let Some(n) = doc.node_mut(id) {
             n.margin_wrapper = true;
         }
+/// Keep a Fixed % read from plugin data only where the size still is that share of the parent: a
+/// layer resized in another app (which kept the plugin data but not the meaning) stays in px.
+fn settle_percent_sizes(doc: &mut Document) {
+    let found: Vec<NodeId> = doc.nodes().filter(|n| n.child_layout.percent_w.is_some() || n.child_layout.percent_h.is_some()).map(|n| n.id).collect();
+    for id in found {
+        let basis = doc.percent_basis(id);
+        let Some(n) = doc.node_mut(id) else { continue };
+        let cl = &mut n.child_layout;
+        let holds = |p: Option<f64>, of: Option<f64>, size: f64, min: Option<f64>, max: Option<f64>| {
+            let (p, of) = (p?, of?);
+            let mut want = of * p / 100.0;
+            if let Some(m) = max.filter(|m| m.is_finite()) {
+                want = want.min(m);
+            }
+            if let Some(m) = min.filter(|m| m.is_finite()) {
+                want = want.max(m);
+            }
+            ((want - size).abs() <= 0.5).then_some(p)
+        };
+        cl.percent_w = holds(cl.percent_w, basis.map(|b| b.0), n.width, cl.min_w, cl.max_w);
+        cl.percent_h = holds(cl.percent_h, basis.map(|b| b.1), n.height, cl.min_h, cl.max_h);
     }
 }
 
@@ -601,6 +623,12 @@ impl<'a> Ctx<'a> {
             && j.pointer("/pluginData/figcraft/margin").and_then(Value::as_str).is_some_and(|v| !matches!(v.trim(), "" | "0" | "false"))
         {
             n.margin_wrapper = true;
+        // Fixed % written by FigCraft (plugin data `figcraft` / `percentSize`: `{"w": .., "h": ..}`),
+        // checked against the sizes once the document is built ([`settle_percent_sizes`]).
+        if let Some(v) = j.pointer("/pluginData/figcraft/percentSize").and_then(Value::as_str).and_then(|s| serde_json::from_str::<Value>(s).ok()) {
+            let read = |k: &str| v.get(k).and_then(Value::as_f64).and_then(figcraft_doc::clean_percent);
+            n.child_layout.percent_w = read("w").filter(|_| n.child_layout.sizing_h == figcraft_doc::Sizing::Fixed);
+            n.child_layout.percent_h = read("h").filter(|_| n.child_layout.sizing_v == figcraft_doc::Sizing::Fixed);
         }
     }
 

@@ -336,11 +336,14 @@ pub(crate) fn css_decls(doc: &Document, n: &Node, t: &mut Tokens, hug: (bool, bo
     let px = |v: f64| format!("{}px", num(v));
     let mut out = String::new();
     let mut put = |key: &str, value: String| out.push_str(&format!("{key}: {value};\n"));
+    // Fixed %: a share of the parent's (content box) size, as CSS reads a percentage.
+    let pct = |p: Option<f64>| p.and_then(figcraft_doc::clean_percent).map(|p| format!("{}%", num(p)));
+    let (pw, ph) = if doc.percent_basis(n.id).is_some() { (pct(n.child_layout.percent_w), pct(n.child_layout.percent_h)) } else { (None, None) };
     if !hug.0 {
-        put("width", tok(doc, n, &["width"], px(n.width), t));
+        put("width", pw.unwrap_or_else(|| tok(doc, n, &["width"], px(n.width), t)));
     }
     if !hug.1 {
-        put("height", tok(doc, n, &["height"], px(n.height), t));
+        put("height", ph.unwrap_or_else(|| tok(doc, n, &["height"], px(n.height), t)));
     }
     if let Some(l) = n.layout.as_ref().filter(|l| l.mode == LayoutMode::Grid) {
         for (key, value) in grid_decls(doc, n, l, hug, t) {

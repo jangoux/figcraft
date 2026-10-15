@@ -893,6 +893,7 @@ impl<'d> Exporter<'d> {
             self.warn("strokes wider on one side of their path were written as filled outlines (the stroke itself is kept for FigCraft)");
             let children = self.layer(&outline, parent, f, nested);
             stash(f, STASH.1, &original);
+            push_plugin_data(f, STASH, &original);
             return children;
         }
         let main = match &n.kind {
@@ -1108,6 +1109,13 @@ impl<'d> Exporter<'d> {
         }
         if !n.plugin_data.is_empty() {
             self.warn("plugin data was left out");
+        }
+        // Fixed % (a FigCraft extension): other apps see the size in px; the percentages are kept
+        // as plugin data the import reads back.
+        let cl = &n.child_layout;
+        if cl.percent_w.is_some() || cl.percent_h.is_some() {
+            let value = serde_json::json!({"w": cl.percent_w, "h": cl.percent_h}).to_string();
+            push_plugin_data(f, PERCENT, &value);
         }
     }
 
@@ -2202,11 +2210,18 @@ pub(super) const MAX_GRID_AUTO_STASH: usize = 256;
 /// layer keeps goes in one `pluginData` list (the format's other readers ignore it).
 pub(super) fn stash(f: &mut Fields, key: &'static str, value: &str) {
     let entry = o(vec![("pluginID", s(STASH.0)), ("value", s(value)), ("key", s(key))]);
+/// The plugin id and key under which a Fixed % layer keeps its percentages (`{"w": .., "h": ..}`).
+pub(super) const PERCENT: (&str, &str) = ("figcraft", "percentSize");
+
+/// Add one plugin data entry to a layer's fields (one `pluginData` list holds them all).
+fn push_plugin_data(f: &mut Fields, (id, key): (&str, &str), value: &str) {
+    let entry = o(vec![("pluginID", s(id)), ("value", s(value)), ("key", s(key))]);
     match f.iter_mut().find(|(k, _)| *k == "pluginData") {
         Some((_, Kv::Array(list))) => list.push(entry),
         _ => f.push(("pluginData", arr(vec![entry]))),
     }
 }
+
 /// Longest kept description of such a layer (bytes of JSON).
 const MAX_STASH: usize = 1 << 20;
 
