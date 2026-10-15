@@ -677,6 +677,8 @@ mod image_tests;
 #[cfg(test)]
 mod large_tests;
 #[cfg(test)]
+mod margin_tests;
+#[cfg(test)]
 mod thumbnail_tests;
 #[cfg(test)]
 mod version_tests;

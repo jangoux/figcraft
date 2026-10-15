@@ -187,8 +187,20 @@ pub fn import_with(v: &Value, variables: Option<&Value>, images: ImageResolver) 
     cx.doc.current_page = cx.doc.first_page();
     cx.styles_take_bindings();
     cx.finish();
+    heal_margin_wrappers(&mut cx.doc);
     let warnings = cx.warnings.finish();
     Ok((cx.doc, warnings))
+}
+
+/// Mark the frames that are margin wrappers by name and shape alone (files whose plugin data was
+/// lost on the way): only the flag is set, so the file looks the same as it was read.
+fn heal_margin_wrappers(doc: &mut Document) {
+    let found: Vec<NodeId> = doc.nodes().filter(|n| !n.margin_wrapper && figcraft_doc::looks_like_margin_wrapper(n)).map(|n| n.id).collect();
+    for id in found {
+        if let Some(n) = doc.node_mut(id) {
+            n.margin_wrapper = true;
+        }
+    }
 }
 
 /// The key a style keeps a layer's binding `key` under, when the layer's `slot` link (fill,
@@ -583,6 +595,12 @@ impl<'a> Ctx<'a> {
         self.bindings(n, j);
         if let Some(original) = j.get("outlinedStroke") {
             restore_stroke(n, original);
+        }
+        // A margin wrapper written by FigCraft (plugin data `figcraft` / `margin`).
+        if n.kind.is_frame_like()
+            && j.pointer("/pluginData/figcraft/margin").and_then(Value::as_str).is_some_and(|v| !matches!(v.trim(), "" | "0" | "false"))
+        {
+            n.margin_wrapper = true;
         }
     }
 

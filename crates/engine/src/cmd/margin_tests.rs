@@ -424,3 +424,27 @@ fn x_and_y_are_measured_in_the_frame_and_move_the_wrapper() {
     assert_eq!(xy(doc, a), (100.0, 50.0));
     assert_eq!(xy(doc, w), (94.0, 46.0));
 }
+
+#[test]
+fn instance_margin_overrides_survive_changes_to_the_main() {
+    let mut s = Session::new();
+    let (f, a, _) = al_frame(&mut s);
+    let w = wrapper(&ex(&mut s, "layout.setMargin", json!({"id": a, "margin": 4})));
+    let comp = id(&ex(&mut s, "component.create", json!({"ids": [f]})));
+    let one = id(&ex(&mut s, "instance.create", json!({"component": comp, "x": 0, "y": 300})));
+    let two = id(&ex(&mut s, "instance.create", json!({"component": comp, "x": 0, "y": 500})));
+    let wrapper_in = |s: &Session, inst| node(s, inst).children[0];
+    let child_in = |s: &Session, inst| node(s, wrapper_in(s, inst)).children[0];
+    // One instance overrides its margin; then the main's margin changes.
+    let a1 = child_in(&s, one);
+    ex(&mut s, "layout.setMargin", json!({"id": a1, "margin": 9}));
+    ex(&mut s, "layout.setMargin", json!({"id": a, "margin": 6}));
+    assert_eq!(node(&s, w).layout.unwrap().padding, [6.0; 4]);
+    let (c1, c2) = (child_in(&s, one), child_in(&s, two));
+    assert_eq!(get(&mut s, c1)["margin"], json!([9.0, 9.0, 9.0, 9.0]), "the override stays");
+    assert_eq!(get(&mut s, c2)["margin"], json!([6.0, 6.0, 6.0, 6.0]), "the others follow the main");
+    assert!(is_margin_wrapper(s.doc().unwrap(), wrapper_in(&s, two)));
+    // The instance lays out with its own margin.
+    let (iw, ia) = (wrapper_in(&s, one), child_in(&s, one));
+    assert_eq!(bounds(&s, ia)[0] - bounds(&s, iw)[0], 9.0);
+}

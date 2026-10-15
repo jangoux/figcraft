@@ -1095,6 +1095,11 @@ impl<'d> Exporter<'d> {
             f.push(("variableConsumptionMap", o(vec![("entries", arr(bound.entries))])));
         }
         self.modes(n, f);
+        // A margin wrapper (a FigCraft extension stored as a plain frame) keeps its flag as plugin
+        // data the import reads back; other apps see the frame. Its name is the fallback.
+        if figcraft_doc::is_margin_wrapper(self.doc, n.id) {
+            f.push(("pluginData", arr(vec![o(vec![("pluginID", s(MARGIN.0)), ("value", s("1")), ("key", s(MARGIN.1))])])));
+        }
         if !n.guides.is_empty() {
             self.warn("ruler guides were left out");
         }
@@ -2173,6 +2178,8 @@ impl<'d> Exporter<'d> {
 
 /// The plugin id and key under which a layer written as an outline keeps what it was.
 pub(super) const STASH: (&str, &str) = ("figcraft", "stroke");
+/// The plugin id and key marking a margin wrapper (`figcraft_doc::margin`).
+pub(super) const MARGIN: (&str, &str) = ("figcraft", "margin");
 /// Longest kept description of such a layer (bytes of JSON).
 const MAX_STASH: usize = 1 << 20;
 
