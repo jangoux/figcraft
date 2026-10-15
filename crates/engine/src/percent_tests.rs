@@ -150,3 +150,63 @@ fn inspect_and_code_show_the_percentage() {
     assert!(css.contains("width: 50%;"), "{css}");
     assert!(css.contains("height: 20px;"), "{css}");
 }
+
+fn drag(s: &mut Session, path: &[(f64, f64)]) {
+    use crate::tools::{PointerEvent, PointerKind};
+    let (first, last) = (path[0], path[path.len() - 1]);
+    s.pointer(&PointerEvent::at(PointerKind::Down, first.0, first.1, 1.0)).unwrap();
+    for p in path {
+        s.pointer(&PointerEvent::at(PointerKind::Move, p.0, p.1, 1.0)).unwrap();
+    }
+    s.pointer(&PointerEvent::at(PointerKind::Up, last.0, last.1, 1.0)).unwrap();
+}
+
+#[test]
+fn dragging_the_parent_smaller_and_larger_keeps_the_share() {
+    let mut s = Session::new();
+    let f = frame(&mut s, None, 400.0, 200.0);
+    let r = rect(&mut s, f, 20.0, 20.0);
+    set(&mut s, r, json!({"widthPercent": 50, "heightPercent": 25}));
+    ex(&mut s, "select.set", json!({"ids": [f]}));
+    // The frame's bottom-right corner: in, past the start, back in.
+    drag(&mut s, &[(400.0, 200.0), (300.0, 150.0), (200.0, 100.0)]);
+    assert_eq!(size(&s, f), (200.0, 100.0));
+    assert_eq!(size(&s, r), (100.0, 25.0), "after shrinking");
+    ex(&mut s, "select.set", json!({"ids": [f]}));
+    drag(&mut s, &[(200.0, 100.0), (500.0, 300.0), (300.0, 120.0)]);
+    assert_eq!(size(&s, f), (300.0, 120.0));
+    assert_eq!(size(&s, r), (150.0, 30.0), "after growing then shrinking");
+    assert_eq!(percent(&s, r), (Some(50.0), Some(25.0)));
+}
+
+#[test]
+fn a_75_percent_child_follows_its_parent_from_1000_down_to_100() {
+    // Typed at once, step by step, and dragged on the canvas; regular frame and auto layout.
+    for auto_layout in [false, true] {
+        for how in ["set", "steps", "drag"] {
+            let mut s = Session::new();
+            let f = frame(&mut s, None, 1000.0, 200.0);
+            if auto_layout {
+                set(&mut s, f, json!({"layout": "horizontal", "padding": 0, "gap": 0}));
+            }
+            let r = rect(&mut s, f, 20.0, 20.0);
+            set(&mut s, r, json!({"widthPercent": 75}));
+            assert_eq!(size(&s, r).0, 750.0, "{how} al={auto_layout}: start");
+            match how {
+                "set" => set(&mut s, f, json!({"width": 100})),
+                "steps" => {
+                    for w in (1..10).rev() {
+                        set(&mut s, f, json!({"width": w * 100}));
+                    }
+                }
+                _ => {
+                    ex(&mut s, "select.set", json!({"ids": [f]}));
+                    drag(&mut s, &[(1000.0, 200.0), (700.0, 200.0), (400.0, 200.0), (100.0, 200.0)]);
+                }
+            }
+            assert_eq!(size(&s, f).0, 100.0, "{how} al={auto_layout}: frame");
+            assert_eq!(size(&s, r).0, 75.0, "{how} al={auto_layout}: child");
+            assert_eq!(percent(&s, r).0, Some(75.0), "{how} al={auto_layout}: percent");
+        }
+    }
+}
