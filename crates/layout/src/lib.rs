@@ -139,7 +139,10 @@ pub fn layout_up(doc: &mut Document, id: NodeId, m: &dyn Measure) {
 
 /// The children an auto layout frame places: visible and not ignoring auto layout.
 pub fn flow_children(doc: &Document, frame: NodeId) -> Vec<NodeId> {
-    let Some(f) = doc.node(frame) else { return Vec::new() };
+    doc.node(frame).map(|f| flow_of(doc, f)).unwrap_or_default()
+}
+
+fn flow_of(doc: &Document, f: &figcraft_doc::Node) -> Vec<NodeId> {
     f.children.iter().copied().filter(|c| doc.node(*c).is_some_and(|n| n.visible && !n.child_layout.absolute)).collect()
 }
 
@@ -629,8 +632,13 @@ pub fn auto_columns(f: &figcraft_doc::Node) -> Option<AutoColumns> {
 /// its width holds (`floor((inner + gap) / (min + gap))`, at least 1), and for `fit` no more than
 /// the children fill (by their column spans).
 pub fn effective_columns(doc: &Document, frame: NodeId) -> u32 {
-    let Some(f) = doc.node(frame) else { return 1 };
-    column_count(f, &flow_children(doc, frame), doc) as u32
+    doc.node(frame).map_or(1, |f| columns_of(doc, f))
+}
+
+/// [`effective_columns`] for grid frame `f` as given (its width and layout; its children are read
+/// from `doc`), e.g. a copy sized differently from the document's.
+pub fn columns_of(doc: &Document, f: &figcraft_doc::Node) -> u32 {
+    column_count(f, &flow_of(doc, f), doc) as u32
 }
 
 fn column_count(f: &figcraft_doc::Node, kids: &[NodeId], doc: &Document) -> usize {
