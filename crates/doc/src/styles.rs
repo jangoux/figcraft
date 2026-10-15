@@ -82,6 +82,15 @@ pub enum VariableValue {
     String(String),
     Boolean(bool),
     Alias(VariableId),
+    /// A colour alias with an opacity on top (a FigCraft extension; files and code the incumbent
+    /// reads get the colour it resolves to): the aliased colour with its alpha times `opacity`
+    /// (0–1), or times the percentage number variable `opacity_variable` holds when set.
+    AliasOpacity {
+        variable: VariableId,
+        opacity: f64,
+        #[serde(default, rename = "opacityVariable", skip_serializing_if = "Option::is_none")]
+        opacity_variable: Option<VariableId>,
+    },
 }
 
 impl VariableValue {
@@ -101,9 +110,36 @@ impl VariableValue {
             VariableValue::Number(_) => Some(VariableType::Number),
             VariableValue::String(_) => Some(VariableType::String),
             VariableValue::Boolean(_) => Some(VariableType::Boolean),
-            VariableValue::Alias(_) => None,
+            VariableValue::Alias(_) | VariableValue::AliasOpacity { .. } => None,
         }
     }
+
+    /// The variable an alias takes its value from.
+    pub fn alias(&self) -> Option<&VariableId> {
+        match self {
+            VariableValue::Alias(a) | VariableValue::AliasOpacity { variable: a, .. } => Some(a),
+            _ => None,
+        }
+    }
+
+    /// Every variable the value refers to (an alias's target, and its opacity variable).
+    pub fn refs(&self) -> impl Iterator<Item = &VariableId> {
+        let opacity = match self {
+            VariableValue::AliasOpacity { opacity_variable, .. } => opacity_variable.as_ref(),
+            _ => None,
+        };
+        self.alias().into_iter().chain(opacity)
+    }
+
+    /// [`refs`](Self::refs), to rewrite them (e.g. when variables are copied under new ids).
+    pub fn refs_mut(&mut self) -> Vec<&mut VariableId> {
+        match self {
+            VariableValue::Alias(a) => vec![a],
+            VariableValue::AliasOpacity { variable, opacity_variable, .. } => std::iter::once(variable).chain(opacity_variable.as_mut()).collect(),
+            _ => Vec::new(),
+        }
+    }
+
     pub fn display(&self) -> String {
         match self {
             VariableValue::Color(c) => c.to_hex(),
@@ -111,6 +147,10 @@ impl VariableValue {
             VariableValue::String(s) => s.clone(),
             VariableValue::Boolean(b) => b.to_string(),
             VariableValue::Alias(a) => format!("→ {a}"),
+            VariableValue::AliasOpacity { variable, opacity, opacity_variable } => match opacity_variable {
+                Some(o) => format!("→ {variable} × {o}"),
+                None => format!("→ {variable} × {}%", crate::text::trim_num(opacity * 100.0)),
+            },
         }
     }
 }
@@ -255,6 +295,10 @@ impl VariableType {
     }
 }
 
+/// How many aliases deep [`Variables::resolve`] follows (deeper chains and cycles resolve to
+/// nothing).
+const MAX_ALIAS_DEPTH: usize = 32;
+
 /// All variables of a document.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
@@ -275,16 +319,42 @@ impl Variables {
     /// Resolve `id` in `modes` (collection → chosen mode; default mode otherwise), following aliases
     /// (bounded, cycles return None).
     pub fn resolve(&self, id: &str, modes: &BTreeMap<CollectionId, ModeId>) -> Option<VariableValue> {
-        let mut cur = id.to_string();
-        for _ in 0..32 {
-            let var = self.get(&cur)?;
-            let coll = self.collection(&var.collection)?;
-            let mode = modes.get(&coll.id).filter(|m| var.values.contains_key(*m)).or_else(|| coll.default_mode())?;
-            match var.values.get(mode).or_else(|| var.values.values().next())? {
-                VariableValue::Alias(next) => cur = next.clone(),
-                v => return Some(v.clone()),
-            }
+        self.resolve_depth(id, modes, 0)
+    }
+
+    /// `val` (a value of one of the variables) resolved in `modes`: a raw value as it is, an alias
+    /// as [`resolve`](Self::resolve) resolves its target.
+    pub fn resolve_value(&self, val: &VariableValue, modes: &BTreeMap<CollectionId, ModeId>) -> Option<VariableValue> {
+        self.value_depth(val, modes, 0)
+    }
+
+    fn resolve_depth(&self, id: &str, modes: &BTreeMap<CollectionId, ModeId>, depth: usize) -> Option<VariableValue> {
+        if depth > MAX_ALIAS_DEPTH {
+            return None;
         }
-        None
+        let var = self.get(id)?;
+        let coll = self.collection(&var.collection)?;
+        let mode = modes.get(&coll.id).filter(|m| var.values.contains_key(*m)).or_else(|| coll.default_mode())?;
+        self.value_depth(var.values.get(mode).or_else(|| var.values.values().next())?, modes, depth + 1)
+    }
+
+    fn value_depth(&self, val: &VariableValue, modes: &BTreeMap<CollectionId, ModeId>, depth: usize) -> Option<VariableValue> {
+        match val {
+            VariableValue::Alias(next) => self.resolve_depth(next, modes, depth),
+            VariableValue::AliasOpacity { variable, opacity, opacity_variable } => {
+                let VariableValue::Color(c) = self.resolve_depth(variable, modes, depth)? else { return None };
+                let k = match opacity_variable {
+                    // Opacity variables hold percentages.
+                    Some(o) => match self.resolve_depth(o, modes, depth)? {
+                        VariableValue::Number(x) => x / 100.0,
+                        _ => return None,
+                    },
+                    None => *opacity,
+                };
+                let k = if k.is_finite() { k.clamp(0.0, 1.0) as f32 } else { 1.0 };
+                Some(VariableValue::Color(c.with_alpha(c.a * k)))
+            }
+            v => Some(v.clone()),
+        }
     }
 }

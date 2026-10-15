@@ -1418,6 +1418,8 @@ mod al_keys_tests;
 #[cfg(test)]
 mod al_nesting_tests;
 #[cfg(test)]
+mod alias_opacity_tests;
+#[cfg(test)]
 mod annotation_categories_tests;
 #[cfg(test)]
 mod annotations_tests;

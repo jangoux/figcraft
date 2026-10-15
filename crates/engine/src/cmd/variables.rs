@@ -272,10 +272,10 @@ pub(crate) fn forget_variables(doc: &mut Document, gone: &BTreeSet<VariableId>) 
     let mut detached: Vec<(VariableId, ModeId, VariableValue)> = Vec::new();
     for v in vars.variables.iter().filter(|v| !gone.contains(&v.id)) {
         for (m, val) in &v.values {
-            let VariableValue::Alias(a) = val else { continue };
-            let Some(t) = vars.get(a).filter(|t| gone.contains(&t.id)) else { continue };
+            // (An alias with an opacity keeps it: resolved as a whole.)
+            let Some(t) = val.refs().filter_map(|a| vars.get(a)).find(|t| gone.contains(&t.id)) else { continue };
             let modes = std::collections::BTreeMap::from([(t.collection.clone(), m.clone())]);
-            if let Some(r) = vars.resolve(&t.id, &modes) {
+            if let Some(r) = vars.resolve_value(val, &modes) {
                 detached.push((v.id.clone(), m.clone(), r));
             }
         }
@@ -410,15 +410,21 @@ pub fn alias_target(vars: &Variables, var: &Variable, target: &str) -> std::resu
         if !seen.insert(cur.clone()) || seen.len() > 10_000 {
             continue;
         }
-        for v in vars.get(&cur).map(|x| x.values.values()).into_iter().flatten() {
-            if let VariableValue::Alias(a) = v
-                && let Some(next) = vars.get(a)
-            {
+        for a in vars.get(&cur).map(|x| x.values.values()).into_iter().flatten().flat_map(VariableValue::refs) {
+            if let Some(next) = vars.get(a) {
                 stack.push(next.id.clone());
             }
         }
     }
     Ok(t.id.clone())
+}
+
+/// The id of number variable `target`, which a colour alias's opacity follows.
+pub fn opacity_target(vars: &Variables, target: &str) -> std::result::Result<VariableId, String> {
+    vars.get(target)
+        .filter(|t| t.kind == VariableType::Number)
+        .map(|t| t.id.clone())
+        .ok_or_else(|| format!("no number variable `{target}` for the opacity"))
 }
 
 /// The variable scope of bindable property `field` on `node` (None: any variable of the type fits).

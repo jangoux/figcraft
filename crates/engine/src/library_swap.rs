@@ -140,10 +140,8 @@ pub fn swap_library(doc: &mut Document, from: &str, to: &PublishedLibrary) -> Re
     let coll_name = |d: &Document, id: &str| d.variables.collection(id).map(|c| c.name.clone()).unwrap_or_default();
     // Variables the document's own layers bind or its own variables alias.
     let remote: BTreeSet<String> = doc.libraries.variables.iter().map(|r| r.local.clone()).collect();
-    let aliases = doc.variables.variables.iter().filter(|v| !remote.contains(&v.id)).flat_map(|v| v.values.values()).filter_map(|x| match x {
-        VariableValue::Alias(a) => Some(a.clone()),
-        _ => None,
-    });
+    let aliases =
+        doc.variables.variables.iter().filter(|v| !remote.contains(&v.id)).flat_map(|v| v.values.values()).flat_map(VariableValue::refs).cloned();
     let used: BTreeSet<String> = doc.nodes().filter(|n| outside(doc, n.id)).flat_map(|n| n.bound.values().cloned()).chain(aliases).collect();
     let var_recs: Vec<ImportedRecord> = doc.libraries.variables.iter().filter(|r| r.library == from && used.contains(&r.local)).cloned().collect();
     let lib_coll = |name: &str| to.doc.variables.collections.iter().find(|c| c.name == name && m.collection(&c.id).is_some_and(|x| x.published));
@@ -221,10 +219,8 @@ pub fn swap_library(doc: &mut Document, from: &str, to: &PublishedLibrary) -> Re
             .collect();
     }
     for v in doc.variables.variables.iter_mut().filter(|v| !remote.contains(&v.id)) {
-        for val in v.values.values_mut() {
-            if let VariableValue::Alias(a) = val
-                && let Some(b) = vars.get(a)
-            {
+        for a in v.values.values_mut().flat_map(VariableValue::refs_mut) {
+            if let Some(b) = vars.get(a) {
                 *a = b.clone();
             }
         }

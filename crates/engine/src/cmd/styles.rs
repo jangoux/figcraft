@@ -155,7 +155,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "variable.set",
             "Set variable value",
-            "{variable, mode? (name or id; default first), value | {alias: variable} (same type, no loops)}",
+            "{variable, mode? (name or id; default first), value | {alias: variable (same type, no loops), opacity? (colours: 0-1, or {alias: number variable} holding a percentage)}}",
             true,
             var_set
         ),
@@ -809,7 +809,19 @@ pub fn set_mode(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn var_value(kind: VariableType, v: &Value) -> Option<VariableValue> {
     if let Some(a) = v.get("alias").and_then(Value::as_str) {
-        return Some(VariableValue::Alias(a.to_string()));
+        // A colour alias can put an opacity on top: 0–1, or a number variable's percentage.
+        return Some(match v.get("opacity") {
+            None | Some(Value::Null) => VariableValue::Alias(a.to_string()),
+            Some(_) if kind != VariableType::Color => return None,
+            Some(o) => match o.get("alias").and_then(Value::as_str) {
+                Some(ov) => VariableValue::AliasOpacity { variable: a.to_string(), opacity: 1.0, opacity_variable: Some(ov.to_string()) },
+                None => VariableValue::AliasOpacity {
+                    variable: a.to_string(),
+                    opacity: f64_of(o).filter(|x| x.is_finite())?.clamp(0.0, 1.0),
+                    opacity_variable: None,
+                },
+            },
+        });
     }
     Some(match kind {
         VariableType::Color => VariableValue::Color(color_of(v)?),
@@ -857,9 +869,12 @@ fn var_create(s: &mut Session, p: &Value) -> Result<Value> {
     // Aliases name an existing variable of the same type (stored by id; nothing refers to the new
     // variable yet, so they can't loop).
     for val in values.values_mut() {
-        if let VariableValue::Alias(a) = val {
+        if let VariableValue::Alias(a) | VariableValue::AliasOpacity { variable: a, .. } = val {
             let t = doc.variables.get(a).filter(|t| t.kind == kind).ok_or_else(|| bad(cmd, format!("no {} variable `{a}` to alias", kind.id())))?;
             *a = t.id.clone();
+        }
+        if let VariableValue::AliasOpacity { opacity_variable: Some(o), .. } = val {
+            *o = super::variables::opacity_target(&doc.variables, o).map_err(|e| bad(cmd, e))?;
         }
     }
     let id = doc.new_variable_id();
@@ -891,6 +906,11 @@ pub fn var_set(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let val = match get(p, "value").and_then(|x| var_value(var.kind, x)).ok_or_else(|| bad(cmd, "invalid value"))? {
         VariableValue::Alias(a) => VariableValue::Alias(super::variables::alias_target(&doc.variables, &var, &a).map_err(|e| bad(cmd, e))?),
+        VariableValue::AliasOpacity { variable, opacity, opacity_variable } => VariableValue::AliasOpacity {
+            variable: super::variables::alias_target(&doc.variables, &var, &variable).map_err(|e| bad(cmd, e))?,
+            opacity,
+            opacity_variable: opacity_variable.map(|o| super::variables::opacity_target(&doc.variables, &o)).transpose().map_err(|e| bad(cmd, e))?,
+        },
         v => v,
     };
     if let Some(slot) = doc.variables.variables.iter_mut().find(|x| x.id == var.id) {
@@ -969,7 +989,7 @@ pub fn apply_bindings_to(doc: &mut Document, only: Option<&std::collections::BTr
                 VariableValue::Number(x) => json!(x),
                 VariableValue::String(x) => json!(x),
                 VariableValue::Boolean(b) => json!(b),
-                VariableValue::Alias(_) => continue,
+                VariableValue::Alias(_) | VariableValue::AliasOpacity { .. } => continue,
             };
             sets.insert(field, jv);
         }

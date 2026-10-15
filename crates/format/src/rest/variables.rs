@@ -57,7 +57,8 @@ pub(super) fn value(kind: VariableType, v: &Value) -> Option<VariableValue> {
 
 /// `collections` of `vars` (with their variables) as a local variables response, which
 /// [`Ctx::variables`] reads back. Aliases to variables outside them are written as the value they
-/// resolve to in the default modes.
+/// resolve to in the default modes, aliases with an opacity (which the format lacks) as the colour
+/// they resolve to in that mode.
 pub fn export(vars: &Variables, collections: &[&Collection]) -> Value {
     let ids: BTreeSet<&str> = collections.iter().map(|c| c.id.as_str()).collect();
     let members: Vec<&Variable> = vars.variables.iter().filter(|v| ids.contains(v.collection.as_str())).collect();
@@ -78,6 +79,10 @@ pub fn export(vars: &Variables, collections: &[&Collection]) -> Value {
         for (mode, val) in &v.values {
             let val = match val {
                 VariableValue::Alias(a) if !exported.contains(a.as_str()) => match vars.resolve(a, &BTreeMap::new()) {
+                    Some(r) => r,
+                    None => continue,
+                },
+                VariableValue::AliasOpacity { .. } => match vars.resolve_value(val, &BTreeMap::from([(v.collection.clone(), mode.clone())])) {
                     Some(r) => r,
                     None => continue,
                 },
@@ -110,6 +115,8 @@ fn raw(v: &VariableValue) -> Value {
         VariableValue::String(s) => json!(s),
         VariableValue::Boolean(b) => json!(b),
         VariableValue::Alias(a) => json!({"type": "VARIABLE_ALIAS", "id": a}),
+        // Written resolved (see `export`).
+        VariableValue::AliasOpacity { .. } => Value::Null,
     }
 }
 

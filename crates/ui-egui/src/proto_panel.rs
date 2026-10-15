@@ -194,7 +194,7 @@ pub(crate) fn value_json(v: &VariableValue) -> Value {
         VariableValue::Number(n) => json!(n),
         VariableValue::Boolean(b) => json!(b),
         VariableValue::String(s) => json!(s),
-        VariableValue::Alias(_) => Value::Null,
+        VariableValue::Alias(_) | VariableValue::AliasOpacity { .. } => Value::Null,
     }
 }
 

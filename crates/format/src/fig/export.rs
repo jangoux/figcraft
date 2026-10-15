@@ -690,6 +690,18 @@ impl<'d> Exporter<'d> {
             let mut values = Vec::new();
             for m in &c.modes {
                 let (Some(mode), Some(val)) = (self.mode_ids.get(&(c.id.as_str(), m.id.as_str())), v.values.get(&m.id)) else { continue };
+                // An alias with an opacity (a FigCraft extension): the colour it resolves to.
+                let opaque;
+                let val = match val {
+                    VariableValue::AliasOpacity { .. } => match doc.variables.resolve_value(val, &BTreeMap::from([(c.id.clone(), m.id.clone())])) {
+                        Some(r) => {
+                            opaque = r;
+                            &opaque
+                        }
+                        None => continue,
+                    },
+                    other => other,
+                };
                 let (ty, value) = match val {
                     VariableValue::Color(x) => ("COLOR", ("colorValue", color(*x))),
                     VariableValue::Number(x) => ("FLOAT", ("floatValue", fl(*x))),
@@ -703,6 +715,7 @@ impl<'d> Exporter<'d> {
                             continue;
                         }
                     },
+                    VariableValue::AliasOpacity { .. } => continue,
                 };
                 let data = o(vec![("value", o(vec![value])), ("dataType", e(ty)), ("resolvedDataType", e(resolved))]);
                 values.push(o(vec![("modeID", guid(AUX, *mode)), ("variableData", data)]));

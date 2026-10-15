@@ -248,11 +248,7 @@ fn alias_closure(vars: &Variables, seeds: impl IntoIterator<Item = VariableId>) 
         if out.len() >= MAX_ASSETS || !out.insert(v.id.clone()) {
             continue;
         }
-        for val in v.values.values() {
-            if let VariableValue::Alias(a) = val {
-                stack.push(a.clone());
-            }
-        }
+        stack.extend(v.values.values().flat_map(VariableValue::refs).cloned());
     }
     out
 }
@@ -690,16 +686,19 @@ pub fn import_variables(
         let Some(collection) = out.collections.get(&v.collection).cloned() else { continue };
         let mut values = BTreeMap::new();
         for (mode, val) in &v.values {
-            let val = match val {
-                // An alias to a variable the library doesn't have resolves to nothing: dropped
-                // (never pointed at a variable of this file).
-                VariableValue::Alias(a) => match src.get(a).and_then(|t| out.variables.get(&t.id)) {
-                    Some(l) => VariableValue::Alias(l.clone()),
-                    None => continue,
-                },
-                other => other.clone(),
-            };
-            values.insert(mode.clone(), val);
+            // An alias to a variable the library doesn't have resolves to nothing: dropped (never
+            // pointed at a variable of this file).
+            let mut val = val.clone();
+            let mut missing = false;
+            for a in val.refs_mut() {
+                match src.get(a).and_then(|t| out.variables.get(&t.id)) {
+                    Some(l) => *a = l.clone(),
+                    None => missing = true,
+                }
+            }
+            if !missing {
+                values.insert(mode.clone(), val);
+            }
         }
         let copy = Variable { id: local.clone(), collection, values, extends: None, overrides: Default::default(), ..v.clone() };
         match doc.variables.variables.iter_mut().find(|x| x.id == local).filter(|_| !new) {
@@ -976,10 +975,15 @@ pub fn prune(doc: &mut Document, library: &str) -> Result<()> {
         .flat_map(|n| n.bound.values().map(String::as_str).chain(action_variables(n)))
         .chain(doc.variables.variables.iter().filter_map(|v| v.extends.as_deref()))
         .map(str::to_string)
-        .chain(doc.variables.variables.iter().filter(|v| !is_remote_variable(doc, &v.id)).flat_map(|v| v.values.values()).filter_map(|x| match x {
-            VariableValue::Alias(a) => Some(a.clone()),
-            _ => None,
-        }))
+        .chain(
+            doc.variables
+                .variables
+                .iter()
+                .filter(|v| !is_remote_variable(doc, &v.id))
+                .flat_map(|v| v.values.values())
+                .flat_map(VariableValue::refs)
+                .cloned(),
+        )
         .collect::<Vec<_>>();
     let used = alias_closure(&doc.variables, seeds);
     let unused: BTreeSet<String> =

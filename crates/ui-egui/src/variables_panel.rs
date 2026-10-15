@@ -25,6 +25,8 @@ const SIDEBAR_W: f32 = 200.0;
 const NAME_W: f32 = 240.0;
 const MODE_W: f32 = 200.0;
 const ROW_H: f32 = 36.0;
+/// The width of a colour alias's opacity field.
+const OPACITY_W: f32 = 60.0;
 const TYPES: [VariableType; 4] = [VariableType::Color, VariableType::Number, VariableType::String, VariableType::Boolean];
 
 /// What's being renamed inline.
@@ -738,6 +740,7 @@ fn value_json(val: &VariableValue) -> Value {
         VariableValue::String(s) => json!(s),
         VariableValue::Boolean(b) => json!(b),
         VariableValue::Alias(a) => json!({"alias": a}),
+        VariableValue::AliasOpacity { variable, .. } => json!({"alias": variable, "opacity": crate::variable_ui::opacity_json(Some(val))}),
     }
 }
 
@@ -769,8 +772,17 @@ fn value_cell(app: &mut FigApp, ui: &mut Ui, view: &View, v: &Variable, coll: &C
             app.run("variable.resetOverride", json!({"variable": v.id, "mode": mode}));
         }
     }
-    if let VariableValue::Alias(target) = val {
+    if let Some(target) = val.alias() {
         let full = view.vars.get(target).map(|x| x.name.as_str()).unwrap_or(tr("Missing variable"));
+        // A colour alias's opacity on top, at the right end (like a raw colour's alpha).
+        let (body, opacity_r) = if v.kind == VariableType::Color {
+            // A number variable's chip takes half the cell.
+            let bound = matches!(val, VariableValue::AliasOpacity { opacity_variable: Some(_), .. });
+            let split = body.max.x - if bound { body.width() / 2.0 } else { OPACITY_W };
+            (Rect::from_min_max(body.min, pos2(split - 4.0, body.max.y)), Some(Rect::from_min_max(pos2(split, body.min.y), body.max)))
+        } else {
+            (body, None)
+        };
         let resp = ui.interact(body, id.with("alias"), if editable { Sense::click() } else { Sense::hover() });
         let resp = if editable { resp.on_hover_text(tr("Change alias")) } else { resp };
         ui.painter().rect_filled(body, CornerRadius::same(5), t.field);
@@ -788,6 +800,9 @@ fn value_cell(app: &mut FigApp, ui: &mut Ui, view: &View, v: &Variable, coll: &C
         ui.painter().with_clip_rect(text_r).text(text_r.left_center(), Align2::LEFT_CENTER, full, regular(11.0), t.text);
         if resp.clicked() {
             crate::variable_ui::open_alias(ui, &v.id, mode, v.kind, body.left_bottom());
+        }
+        if let Some(r) = opacity_r {
+            alias_opacity(app, ui, view, v, coll, mode, target, r);
         }
         // Detach: keep the value it resolves to now.
         if hovered && widgets::icon_button_at(ui, id.with("detach"), alias_btn, Icon::Detach, tr("Detach alias")) {
@@ -842,10 +857,58 @@ fn value_cell(app: &mut FigApp, ui: &mut Ui, view: &View, v: &Variable, coll: &C
                 set(app, v, mode, json!(!b));
             }
         }
-        VariableValue::Alias(_) => {}
+        VariableValue::Alias(_) | VariableValue::AliasOpacity { .. } => {}
     }
     if hovered && widgets::icon_button_at(ui, id.with("mkalias"), alias_btn, Icon::Variable, tr("Create alias")) {
         crate::variable_ui::open_alias(ui, &v.id, mode, v.kind, body.left_bottom());
+    }
+}
+
+/// The opacity a colour alias puts on top of its target, in `rect`: a percentage, or the number
+/// variable it follows (change or detach it; a percentage field's variable button picks one).
+#[allow(clippy::too_many_arguments)]
+fn alias_opacity(app: &mut FigApp, ui: &mut Ui, view: &View, v: &Variable, coll: &Collection, mode: &str, target: &str, rect: Rect) {
+    let t = Tokens::get(ui.ctx());
+    let val = v.values.get(mode);
+    let (opacity, bound) = match val {
+        Some(VariableValue::AliasOpacity { opacity, opacity_variable, .. }) => (*opacity, opacity_variable.as_deref()),
+        _ => (1.0, None),
+    };
+    let name = bound.map(|o| view.vars.get(o).map(|x| x.name.as_str()).unwrap_or(tr("Missing variable")));
+    let pct = (opacity * 100.0).round();
+    if !view.editable() {
+        let text = name.map_or_else(|| format!("{pct}%"), str::to_string);
+        ui.painter().with_clip_rect(rect).text(pos2(rect.max.x - 8.0, rect.center().y), Align2::RIGHT_CENTER, text, regular(11.0), t.text_secondary);
+        return;
+    }
+    let id = Id::new(("var_alias_opacity", &v.id, mode));
+    let field = Rect::from_center_size(rect.center(), vec2(rect.width(), widgets::FIELD_H));
+    let mut child = ui.new_child(UiBuilder::new().max_rect(field));
+    let (edit, ev) = widgets::number_field_bindable(&mut child, id, Lead::None, Some(pct), "%", field.width(), 1.0, Some(name), "");
+    // 100% is a plain alias.
+    let params = |n: f64| {
+        let opacity = if n >= 100.0 { Value::Null } else { json!((n / 100.0).clamp(0.0, 1.0)) };
+        json!({"variable": v.id, "mode": mode, "value": {"alias": target, "opacity": opacity}})
+    };
+    match edit.and_then(widgets::Edit::settled) {
+        Some(FieldEdit::Set(n)) => {
+            app.run("variable.set", params(n));
+        }
+        Some(FieldEdit::Scrub(n, done)) => crate::typography::live(app, "Edit variable", "variable.set", params(n), done),
+        None => {}
+    }
+    match ev {
+        Some(widgets::BindEvent::Open(at)) => crate::variable_ui::open_alias_opacity(ui, &v.id, mode, at),
+        // Detached: the percentage the variable holds now.
+        Some(widgets::BindEvent::Detach) => {
+            let modes = [(coll.id.clone(), mode.to_string())].into_iter().collect();
+            let n = bound.and_then(|o| view.vars.resolve(o, &modes)).and_then(|x| match x {
+                VariableValue::Number(n) => Some(n),
+                _ => None,
+            });
+            app.run("variable.set", params(n.unwrap_or(100.0)));
+        }
+        None => {}
     }
 }
 
