@@ -62,3 +62,14 @@ pub fn margin_of(doc: &Document, id: NodeId) -> [f64; 4] {
         .map(|l| l.padding.map(|p| if p.is_finite() { p.max(0.0) } else { 0.0 }))
         .unwrap_or([0.0; 4])
 }
+
+/// What stands for `id` among its parent's layers: its margin wrapper when it has one (moving,
+/// reordering, deleting or duplicating the child acts on it), else `id`.
+pub fn margin_outer(doc: &Document, id: NodeId) -> NodeId {
+    margin_wrapper_of(doc, id).filter(|w| *w != id).unwrap_or(id)
+}
+
+/// The parent of `id` as the layers panel shows it: past a margin wrapper.
+pub fn visible_parent(doc: &Document, id: NodeId) -> Option<NodeId> {
+    doc.node(margin_outer(doc, id)).and_then(|n| n.parent)
+}

@@ -516,12 +516,13 @@ impl Document {
     }
 
     /// `id`'s transform in the space of the frame it is in (or of the page): groups and boolean
-    /// groups have no coordinate space of their own, so theirs fold in. X and Y are measured there.
+    /// groups have no coordinate space of their own, so theirs fold in, and neither do margin
+    /// wrappers (a wrapped child is measured in its wrapper's frame). X and Y are measured there.
     pub fn frame_relative(&self, id: NodeId) -> Affine {
         let Some(n) = self.node(id) else { return Affine::IDENTITY };
         let mut t = n.transform;
         let mut parent = n.parent;
-        while let Some(p) = parent.and_then(|p| self.node(p)).filter(|p| p.kind.bounds_follow_children()) {
+        while let Some(p) = parent.and_then(|p| self.node(p)).filter(|p| p.kind.bounds_follow_children() || margin::is_margin_wrapper(self, p.id)) {
             t = p.transform * t;
             parent = p.parent;
         }

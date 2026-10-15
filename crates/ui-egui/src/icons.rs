@@ -133,6 +133,13 @@ icons! {
     Fixed,
     PaddingH,
     PaddingV,
+    /// Margins: a solid layer with room outside its edges (padding is room inside a frame).
+    MarginH,
+    MarginV,
+    MarginTop,
+    MarginRight,
+    MarginBottom,
+    MarginLeft,
     Gap,
     Reset,
     Detach,
@@ -873,6 +880,33 @@ fn draw(p: &P, icon: Icon) {
         PaddingV => {
             p.rect(3.5, 2.5, 12.5, 13.5, 1.0);
             p.fill_rect(6.0, 5.0, 10.0, 11.0, 0.0);
+        }
+        // A solid layer and the edge its margin keeps away: bars outside the sides it applies to.
+        MarginH => {
+            p.fill_rect(6.0, 4.0, 10.0, 12.0, 1.0);
+            p.line(2.5, 3.0, 2.5, 13.0);
+            p.line(13.5, 3.0, 13.5, 13.0);
+        }
+        MarginV => {
+            p.fill_rect(4.0, 6.0, 12.0, 10.0, 1.0);
+            p.line(3.0, 2.5, 13.0, 2.5);
+            p.line(3.0, 13.5, 13.0, 13.5);
+        }
+        MarginTop => {
+            p.fill_rect(4.0, 6.5, 12.0, 13.0, 1.0);
+            p.line(3.0, 2.5, 13.0, 2.5);
+        }
+        MarginRight => {
+            p.fill_rect(3.0, 4.0, 9.5, 12.0, 1.0);
+            p.line(13.5, 3.0, 13.5, 13.0);
+        }
+        MarginBottom => {
+            p.fill_rect(4.0, 3.0, 12.0, 9.5, 1.0);
+            p.line(3.0, 13.5, 13.0, 13.5);
+        }
+        MarginLeft => {
+            p.fill_rect(6.5, 4.0, 13.0, 12.0, 1.0);
+            p.line(2.5, 3.0, 2.5, 13.0);
         }
         Online => {
             p.circle(8.0, 8.0, 5.5);

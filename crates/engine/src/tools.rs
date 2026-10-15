@@ -1159,8 +1159,10 @@ impl Session {
                 if new_sel.is_empty() || doc.node(target).is_some_and(|n| n.locked) {
                     return Ok(());
                 }
-                // Locked layers selected in the layers panel stay put.
-                let ids: Vec<NodeId> = roots(&doc, &new_sel).into_iter().filter(|i| !locked_in(&doc, *i)).collect();
+                // Locked layers selected in the layers panel stay put; a wrapped child moves with
+                // its margin wrapper.
+                let ids: Vec<NodeId> =
+                    roots(&doc, &new_sel).into_iter().map(|i| figcraft_doc::margin_outer(&doc, i)).filter(|i| !locked_in(&doc, *i)).collect();
                 if ids.is_empty() {
                     return Ok(());
                 }
@@ -2236,7 +2238,7 @@ impl Session {
         // Escape selects the parent, then nothing.
         let doc = self.doc()?;
         let parents: Vec<NodeId> =
-            sel.iter().filter_map(|i| doc.node(*i).and_then(|n| n.parent)).filter(|p| !doc.node(*p).is_some_and(Node::is_page)).collect();
+            sel.iter().filter_map(|i| figcraft_doc::visible_parent(doc, *i)).filter(|p| !doc.node(*p).is_some_and(Node::is_page)).collect();
         if !parents.is_empty() {
             let mut uniq = Vec::new();
             for p in parents {

@@ -19,8 +19,15 @@ use crate::widgets::{self, FIELD_H, Lead};
 /// Most tracks listed in the panel (the rest are still laid out; edit them through commands).
 const MAX_TRACK_ROWS: usize = 24;
 
+/// The auto layout (or other) frame `id` sits in, past a margin wrapper.
 fn parent_of(doc: &Document, id: NodeId) -> Option<&Node> {
-    doc.node(id).and_then(|n| n.parent).and_then(|p| doc.node(p))
+    figcraft_doc::visible_parent(doc, id).and_then(|p| doc.node(p))
+}
+
+/// The layer holding `n`'s place in its parent: its margin wrapper when it has one (which keeps
+/// the child's absolute position, constraints and grid cell), else `n`.
+pub(crate) fn role<'a>(doc: &'a Document, n: &'a Node) -> &'a Node {
+    doc.node(figcraft_doc::margin_outer(doc, n.id)).unwrap_or(n)
 }
 
 pub fn layout_section(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
@@ -50,9 +57,14 @@ pub fn layout_section(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[Node
         ui.add_enabled_ui(!in_instance, |ui| direction(app, ui, &ids, l)).response.on_disabled_hover_text(from_main);
     }
     ui.add_enabled_ui(!nested, |ui| dimensions(app, ui, doc, sel, has_al)).response.on_disabled_hover_text(from_main);
+    // Margin sits right below the padding (or the dimensions, for a layer without auto layout).
+    if !has_al {
+        margin(app, ui, doc, sel);
+    }
     if let Some(Some(l)) = &al {
         alignment(app, ui, &ids, l);
         spacing(app, ui, &ids, l);
+        margin(app, ui, doc, sel);
         ui.add_enabled_ui(!in_instance, |ui| {
             advanced(app, ui, &ids, l);
             if l.mode == LayoutMode::Grid && sel.len() == 1 {
@@ -63,14 +75,78 @@ pub fn layout_section(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[Node
         .on_disabled_hover_text(from_main);
     }
     let grid_parent = sel.iter().all(|i| parent_of(doc, *i).and_then(|p| p.layout.as_ref()).is_some_and(|l| l.mode == LayoutMode::Grid));
-    if grid_parent && common(doc, sel, |n| n.child_layout.absolute) == Some(false) {
-        ui.add_enabled_ui(!nested, |ui| grid_cell(app, ui, doc, sel)).response.on_disabled_hover_text(from_main);
+    if grid_parent && common(doc, sel, |n| role(doc, n).child_layout.absolute) == Some(false) {
+        let cells: Vec<NodeId> = sel.iter().map(|i| figcraft_doc::margin_outer(doc, *i)).collect();
+        ui.add_enabled_ui(!nested, |ui| grid_cell(app, ui, doc, &cells)).response.on_disabled_hover_text(from_main);
     }
     if frames {
         let clip = common(doc, sel, |n| n.clip);
         row(ui, 32.0, |ui| {
             if widgets::checkbox(ui, clip.unwrap_or(false), tr("Clip content")) {
                 app.set_props(&ids, json!({"clip": !clip.unwrap_or(false)}));
+            }
+        });
+    }
+}
+
+/// Margin: room around one child of an auto layout frame, kept as a plain wrapper frame whose
+/// padding it is (a FigCraft extension; `layout.setMargin`). Horizontal and vertical like padding,
+/// or each side on its own.
+fn margin(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]) {
+    let &[id] = sel else { return };
+    if !parent_of(doc, id).is_some_and(|p| p.layout.is_some() && p.kind.is_frame_like()) {
+        return;
+    }
+    let [t, r, b, l] = figcraft_doc::margin_of(doc, id);
+    let col = widgets::col_width(ui.available_width());
+    let sides_id = Id::new("margin_sides");
+    let sides = ui.data(|d| d.get_temp::<bool>(sides_id)).unwrap_or(false);
+    let set = |m: [f64; 4]| json!({"id": id, "margin": m.map(|v| v.max(0.0))});
+    widgets::sublabels(ui, tr("Margin"), None);
+    if sides {
+        // Inline sides (left, right) on the first row, block sides (top, bottom) on the second,
+        // like the horizontal and vertical fields they split.
+        let fields = [
+            (tr("Left margin"), Icon::MarginLeft, 3),
+            (tr("Right margin"), Icon::MarginRight, 1),
+            (tr("Top margin"), Icon::MarginTop, 0),
+            (tr("Bottom margin"), Icon::MarginBottom, 2),
+        ];
+        for (top_row, pair) in fields.chunks(2).enumerate().map(|(i, p)| (i == 0, p)) {
+            row(ui, 32.0, |ui| {
+                for (name, icon, k) in pair {
+                    let cur = [t, r, b, l];
+                    let e = widgets::number_field(ui, Id::new(("margin", *k)), Lead::Icon(*icon, name), cur.get(*k).copied(), "", col, 1.0);
+                    app.field_run(e, "layout.setMargin", |v| {
+                        let mut m = cur;
+                        if let Some(side) = m.get_mut(*k) {
+                            *side = v;
+                        }
+                        set(m)
+                    });
+                }
+                if top_row && icons::button(ui, Icon::IndependentCorners, 24.0, true, tr("Individual margins")).clicked() {
+                    ui.data_mut(|d| d.insert_temp(sides_id, false));
+                }
+            });
+        }
+    } else {
+        row(ui, 32.0, |ui| {
+            let e = widgets::number_field(
+                ui,
+                Id::new("margin_h"),
+                Lead::Icon(Icon::MarginH, tr("Horizontal margin")),
+                (l == r).then_some(l),
+                "",
+                col,
+                1.0,
+            );
+            app.field_run(e, "layout.setMargin", |v| set([t, v, b, v]));
+            let e =
+                widgets::number_field(ui, Id::new("margin_v"), Lead::Icon(Icon::MarginV, tr("Vertical margin")), (t == b).then_some(t), "", col, 1.0);
+            app.field_run(e, "layout.setMargin", |v| set([v, r, v, l]));
+            if icons::button(ui, Icon::IndependentCorners, 24.0, false, tr("Individual margins")).clicked() {
+                ui.data_mut(|d| d.insert_temp(sides_id, true));
             }
         });
     }
@@ -169,7 +245,7 @@ fn dimensions(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId], has
         return;
     }
     // Min/max apply to auto layout frames and their children; absolute children neither fill nor limit.
-    let can_fill = parent_al && sel.iter().all(|i| doc.node(*i).is_some_and(|n| !n.child_layout.absolute));
+    let can_fill = parent_al && sel.iter().all(|i| doc.node(*i).is_some_and(|n| !role(doc, n).child_layout.absolute));
     let can_limit = has_al || can_fill;
     let first = sel.first().and_then(|i| doc.node(*i));
     row(ui, 32.0, |ui| {

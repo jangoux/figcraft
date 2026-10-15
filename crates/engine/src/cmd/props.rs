@@ -261,7 +261,53 @@ fn ensure_layout(n: &mut Node) -> &mut AutoLayout {
 }
 
 /// Apply a property map to one node. `x`/`y` are relative to the parent.
+/// Keys for how a layer sits in its auto layout parent. A child with a margin keeps them on its
+/// margin wrapper (`figcraft_doc::margin`), so they are set there.
+const ROLE_KEYS: &[&str] = &[
+    "absolute",
+    "ignoreAutoLayout",
+    "constraints",
+    "gridColumn",
+    "gridColumnAnchorIndex",
+    "gridRow",
+    "gridRowAnchorIndex",
+    "gridColumnSpan",
+    "gridRowSpan",
+    "gridAlignH",
+    "gridChildHorizontalAlign",
+    "gridAlignV",
+    "gridChildVerticalAlign",
+];
+const SIZING_KEYS: &[&str] = &["sizingH", "layoutSizingHorizontal", "sizingV", "layoutSizingVertical"];
+
 pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Value>) -> Result<()> {
+    let w = figcraft_doc::margin_outer(doc, id);
+    if w == id || !props.keys().any(|k| ROLE_KEYS.contains(&k.as_str()) || SIZING_KEYS.contains(&k.as_str()) || matches!(k.as_str(), "x" | "y")) {
+        return apply_one(cmd, doc, id, props);
+    }
+    // X and Y of a wrapped child (measured in the wrapper's frame) move the wrapper.
+    let inset = doc.get(id)?.transform.as_coeffs();
+    // A wrapped child: its place in the parent goes to the wrapper. Fill fills the parent with the
+    // wrapper and the wrapper with the child; Fixed or Hug size the child, the wrapper hugging it.
+    let (mut own, mut outer) = (Map::new(), Map::new());
+    for (k, v) in props {
+        if ROLE_KEYS.contains(&k.as_str()) {
+            outer.insert(k.clone(), v.clone());
+        } else if let ("x" | "y", Some(at)) = (k.as_str(), f64_of(v)) {
+            outer.insert(k.clone(), json!(at - if k == "x" { inset[4] } else { inset[5] }));
+        } else if SIZING_KEYS.contains(&k.as_str()) {
+            let s = sizing(v).ok_or_else(|| bad(cmd, "sizing: fixed|hug|fill"))?;
+            outer.insert(k.clone(), json!(if s == Sizing::Fill { "fill" } else { "hug" }));
+            own.insert(k.clone(), v.clone());
+        } else {
+            own.insert(k.clone(), v.clone());
+        }
+    }
+    apply_one(cmd, doc, w, &outer)?;
+    apply_one(cmd, doc, id, &own)
+}
+
+fn apply_one(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Value>) -> Result<()> {
     let mut unknown = Vec::new();
     // Geometry keys first so rotation applies to the final size.
     let order = |k: &str| match k {

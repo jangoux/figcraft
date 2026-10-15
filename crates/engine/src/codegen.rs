@@ -304,8 +304,23 @@ fn tok(doc: &Document, n: &Node, fields: &[&str], value: String, t: &mut Tokens)
 fn css(doc: &Document, id: NodeId) -> String {
     let Some(n) = doc.node(id) else { return String::new() };
     let mut t = Tokens::default();
-    let decls = css_decls(doc, n, &mut t, (false, false));
+    let mut decls = css_decls(doc, n, &mut t, (false, false));
+    if figcraft_doc::margin_outer(doc, id) != id {
+        decls.push_str(&margin_decl(figcraft_doc::margin_of(doc, id)));
+    }
     format!("/* {} */\n{decls}", n.name.replace("*/", "* /"))
+}
+
+/// `margin: …;` for a child with a margin (empty when it is 0 all round). The margin wrapper is
+/// FigCraft's way of storing it, so code shows the margin on the child instead of an extra box.
+fn margin_decl(m: [f64; 4]) -> String {
+    let px = |v: f64| if v == 0.0 { "0".to_string() } else { format!("{}px", num(v)) };
+    match m {
+        [0.0, 0.0, 0.0, 0.0] => String::new(),
+        [t, r, b, l] if t == r && r == b && b == l => format!("margin: {};\n", px(t)),
+        [t, r, b, l] if t == b && r == l => format!("margin: {} {};\n", px(t), px(r)),
+        [t, r, b, l] => format!("margin: {} {} {} {};\n", px(t), px(r), px(b), px(l)),
+    }
 }
 
 /// The CSS declarations for `n`'s own look and size, one per line; `hug` leaves out the width
@@ -588,6 +603,9 @@ pub(crate) struct Markup<'c, 'a> {
     /// The root's class (default: from its name) and extra JSX attributes.
     pub root_class: Option<String>,
     pub root_attrs: String,
+    /// The margin of the layer about to be written, when it is a margin wrapper's child written in
+    /// the wrapper's place.
+    margin: Option<[f64; 4]>,
     /// Each layer's path in the tree (names with sibling counts), class and declarations, so
     /// variants can be compared layer by layer.
     pub rules: Vec<(String, String, String)>,
@@ -604,6 +622,7 @@ impl<'c, 'a> Markup<'c, 'a> {
             tokens: Tokens::default(),
             root_class: None,
             root_attrs: String::new(),
+            margin: None,
             rules: Vec::new(),
         }
     }
@@ -626,6 +645,21 @@ impl<'c, 'a> Markup<'c, 'a> {
     /// A layer, shown only while its boolean parameter is on (component code).
     pub fn node(&mut self, id: NodeId, parent: Option<&Node>, depth: usize, path: &str) {
         let Some(n) = self.ctx.doc.node(id) else { return };
+        // A margin wrapper is written as its child with a margin, in the wrapper's place (its
+        // flow sizing and absolute position).
+        if id != self.ctx.root
+            && n.children.len() == 1
+            && figcraft_doc::is_margin_wrapper(self.ctx.doc, id)
+            && let Some(child) = n.children.first().and_then(|c| self.ctx.doc.node(*c))
+        {
+            let mut c = child.clone();
+            c.child_layout.absolute = n.child_layout.absolute;
+            let (w, k) = (n.transform.as_coeffs(), child.transform.as_coeffs());
+            c.transform = figcraft_geom::Affine::new([k[0], k[1], k[2], k[3], w[4], w[5]]);
+            self.margin = Some(figcraft_doc::margin_of(self.ctx.doc, id));
+            self.element(&c, parent, depth, path);
+            return;
+        }
         if self.code()
             && id != self.ctx.root
             && let Some(p) = self.ctx.param(n, "visible")
@@ -653,6 +687,7 @@ impl<'c, 'a> Markup<'c, 'a> {
     fn element(&mut self, n: &Node, parent: Option<&Node>, depth: usize, path: &str) {
         let doc = self.ctx.doc;
         let root = n.id == self.ctx.root;
+        let margin = self.margin.take().map(margin_decl).unwrap_or_default();
         let class = match self.root_class.take().filter(|_| root) {
             Some(c) => {
                 self.used.push(c.clone());
@@ -685,6 +720,7 @@ impl<'c, 'a> Markup<'c, 'a> {
                 decls.push_str(&format!("transform: rotate({}deg);\ntransform-origin: 0 0;\n", num(-rot)));
             }
         }
+        decls.push_str(&margin);
         // Nested instances are calls (component code), in a wrapper that places them when needed.
         if self.code() && !root && matches!(n.kind, NodeKind::Instance { .. }) {
             let at = depth + usize::from(!decls.is_empty());

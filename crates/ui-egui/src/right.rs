@@ -627,8 +627,8 @@ fn position_fields(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]
     let y_of = |n: &Node| (doc.frame_relative(n.id).as_coeffs()[5] * 100.0).round() / 100.0;
     let rot_of = |n: &Node| (figcraft_geom::rotation_degrees(n.transform) * 100.0).round() / 100.0;
     let (x, y, rot) = (common(doc, sel, x_of), common(doc, sel, y_of), common(doc, sel, rot_of));
-    let parent_al = sel.iter().all(|i| doc.node(*i).and_then(|n| n.parent).and_then(|p| doc.node(p)).is_some_and(|p| p.layout.is_some()));
-    let absolute = common(doc, sel, |n| n.child_layout.absolute);
+    let parent_al = sel.iter().all(|i| figcraft_doc::visible_parent(doc, *i).and_then(|p| doc.node(p)).is_some_and(|p| p.layout.is_some()));
+    let absolute = common(doc, sel, |n| crate::layout_panel::role(doc, n).child_layout.absolute);
     widgets::sublabels(ui, tr("Position"), None);
     row(ui, 32.0, |ui| {
         let e = widgets::number_field_mixed(ui, Id::new("pos_x"), Lead::Text("X"), x, "", col, 1.0);
@@ -666,12 +666,12 @@ fn position_fields(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[NodeId]
     });
     // Constraints (children of frames without auto layout, or ignoring it).
     let in_frame = sel.iter().all(|i| {
-        doc.node(*i).is_some_and(|n| {
+        doc.node(*i).map(|n| crate::layout_panel::role(doc, n)).is_some_and(|n| {
             n.parent.and_then(|p| doc.node(p)).is_some_and(|p| p.kind.is_frame_like() && (p.layout.is_none() || n.child_layout.absolute))
         })
     });
     if in_frame {
-        let c = common(doc, sel, |n| n.constraints);
+        let c = common(doc, sel, |n| crate::layout_panel::role(doc, n).constraints);
         widgets::sublabels(ui, tr("Constraints"), None);
         row(ui, 32.0, |ui| {
             let h = c.map(|c| format!("{:?}", c.horizontal)).unwrap_or_else(|| "Mixed".into());

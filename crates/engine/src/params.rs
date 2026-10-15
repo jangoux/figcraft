@@ -99,9 +99,24 @@ pub fn targets(s: &Session, p: &Value) -> Vec<NodeId> {
     s.selection()
 }
 
+/// Commands that act on a wrapped child's margin wrapper instead (`figcraft_doc::margin`): moving,
+/// reordering, deleting, duplicating, copying or grouping the child takes its margin along.
+const ON_MARGIN_WRAPPER: &[&str] = &[
+    "edit.delete",
+    "edit.duplicate",
+    "edit.copy",
+    "edit.cut",
+    "arrange",
+    "node.reparent",
+    "object.moveToPage",
+    "object.group",
+    "transform.move",
+    "transform.nudge",
+];
+
 /// Like [`targets`] but an empty result is an error.
 pub fn req_targets(cmd: &str, s: &Session, p: &Value) -> Result<Vec<NodeId>> {
-    let t = targets(s, p);
+    let mut t = targets(s, p);
     if t.is_empty() {
         return Err(EngineError::Disabled(cmd.to_string(), "nothing is selected (pass `ids`)".into()));
     }
@@ -110,6 +125,10 @@ pub fn req_targets(cmd: &str, s: &Session, p: &Value) -> Result<Vec<NodeId>> {
             if !doc.contains(*i) {
                 return Err(EngineError::NoNode(*i));
             }
+        }
+        if ON_MARGIN_WRAPPER.contains(&cmd) {
+            let mut seen = std::collections::BTreeSet::new();
+            t = t.into_iter().map(|i| figcraft_doc::margin_outer(doc, i)).filter(|i| seen.insert(*i)).collect();
         }
     }
     Ok(t)

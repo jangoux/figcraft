@@ -246,6 +246,19 @@ pub fn layers_at(doc: &Document, page: NodeId, pt: Point, tol: f64, result: Bool
 /// contents) resolve relative to that context, which is how double-click "enters" groups.
 /// `deep` (Cmd-click) selects the leaf itself.
 pub fn select_target(doc: &Document, leaf: NodeId, context: &[NodeId], deep: bool) -> NodeId {
+    past_margin(doc, raw_select_target(doc, leaf, context, deep))
+}
+
+/// The layer a margin wrapper stands for: its one child (clicks and selections never rest on a
+/// wrapper, see [`crate::margin`]); any other layer itself.
+pub fn past_margin(doc: &Document, id: NodeId) -> NodeId {
+    match doc.node(id) {
+        Some(n) if n.children.len() == 1 && crate::is_margin_wrapper(doc, id) => n.children.first().copied().unwrap_or(id),
+        _ => id,
+    }
+}
+
+fn raw_select_target(doc: &Document, leaf: NodeId, context: &[NodeId], deep: bool) -> NodeId {
     if deep {
         return leaf;
     }
@@ -294,7 +307,7 @@ pub fn enter_target(doc: &Document, leaf: NodeId, selection: &[NodeId]) -> NodeI
     chain.reverse();
     chain.push(leaf);
     let inner = chain.iter().rposition(|c| selection.contains(c)).and_then(|i| chain.get(i + 1)).copied();
-    inner.unwrap_or_else(|| select_target(doc, leaf, selection, false))
+    inner.map(|i| past_margin(doc, i)).unwrap_or_else(|| select_target(doc, leaf, selection, false))
 }
 
 /// Nodes on `page` whose world bounds intersect `rect` (marquee): top-level children, or the

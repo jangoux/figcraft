@@ -30,6 +30,12 @@ pub fn node_json(doc: &Document, id: NodeId, depth: usize) -> Value {
         if !n.visible {
             o.insert("visible".into(), json!(false));
         }
+        // Margins (a FigCraft extension stored as a wrapper frame): shown on the child.
+        if figcraft_doc::margin_outer(doc, id) != id {
+            o.insert("margin".into(), json!(figcraft_doc::margin_of(doc, id).map(round)));
+        } else if figcraft_doc::is_margin_wrapper(doc, id) {
+            o.insert("marginWrapper".into(), json!(true));
+        }
         if n.locked {
             o.insert("locked".into(), json!(true));
         }

@@ -161,13 +161,15 @@ fn a_child_that_only_filled_the_wrapper_keeps_its_size() {
     let mut s = Session::new();
     let (_, a, _) = al_frame(&mut s);
     let w = wrapper(&ex(&mut s, "layout.setMargin", json!({"id": a, "margin": 5})));
-    // The wrapper made fixed, the child filling it: removing the margin can't fill the parent.
+    // The wrapper made fixed, the child filling it (as a file can have it; `node.set` on the child
+    // fills the parent instead): removing the margin can't fill the parent.
     ex(&mut s, "node.set", json!({"id": w, "props": {"sizingH": "fixed", "width": 100}}));
-    ex(&mut s, "node.set", json!({"id": a, "props": {"sizingH": "fill"}}));
-    assert_eq!(node(&s, a).width, 90.0);
+    s.doc_mut().unwrap().get_mut(a).unwrap().child_layout.sizing_h = Sizing::Fill;
+    ex(&mut s, "node.set", json!({"id": w, "props": {"width": 110}}));
+    assert_eq!(node(&s, a).width, 100.0);
     ex(&mut s, "layout.setMargin", json!({"id": a, "margin": 0}));
     let an = node(&s, a);
-    assert_eq!((an.child_layout.sizing_h, an.width), (Sizing::Fixed, 90.0));
+    assert_eq!((an.child_layout.sizing_h, an.width), (Sizing::Fixed, 100.0));
 }
 
 #[test]
@@ -287,4 +289,138 @@ fn inside_instances_only_the_padding_changes() {
     assert!(s.doc().unwrap().contains(iw));
     assert!(matches!(s.execute("layout.setMargin", &json!({"id": ib, "margin": 3})), Err(EngineError::BadParams { .. })));
     let _ = b;
+}
+
+#[test]
+fn clicks_and_selections_land_on_the_child() {
+    let mut s = Session::new();
+    let (f, a, b) = al_frame(&mut s);
+    let w = wrapper(&ex(&mut s, "layout.setMargin", json!({"id": a, "margin": 5})));
+    let doc = s.doc().unwrap();
+    // A click in a top-level frame selects its direct child: the wrapper stands for the child.
+    assert_eq!(figcraft_doc::geometry::select_target(doc, a, &[], false), a);
+    assert_eq!(figcraft_doc::geometry::select_target(doc, w, &[], false), a);
+    assert_eq!(figcraft_doc::geometry::enter_target(doc, a, &[f]), a, "double click enters past the wrapper");
+    assert_eq!(figcraft_doc::geometry::select_target(doc, b, &[a], false), b, "siblings resolve from the child");
+    // Selecting the wrapper selects the child.
+    ex(&mut s, "select.set", json!({"ids": [w]}));
+    assert_eq!(s.selection(), vec![a]);
+    // Parent and siblings skip the wrapper.
+    ex(&mut s, "select.next", json!({}));
+    assert_eq!(s.selection(), vec![b]);
+    ex(&mut s, "select.previous", json!({}));
+    assert_eq!(s.selection(), vec![a]);
+    ex(&mut s, "select.parent", json!({}));
+    assert_eq!(s.selection(), vec![f]);
+    ex(&mut s, "select.set", json!({"ids": [a]}));
+    s.escape().unwrap();
+    assert_eq!(s.selection(), vec![f], "Escape selects the frame, not the wrapper");
+}
+
+#[test]
+fn moving_reordering_deleting_and_duplicating_the_child_act_on_the_wrapper() {
+    let mut s = Session::new();
+    let (f, a, b) = al_frame(&mut s);
+    let w = wrapper(&ex(&mut s, "layout.setMargin", json!({"id": a, "margin": 5})));
+    // Reorder: the wrapper moves among the frame's layers, the child stays inside it.
+    ex(&mut s, "arrange.front", json!({"ids": [a]}));
+    assert_eq!(node(&s, f).children, vec![b, w]);
+    assert_eq!(node(&s, w).children, vec![a]);
+    // Duplicate: a second wrapper with its own child, which is selected.
+    ex(&mut s, "edit.duplicate", json!({"ids": [a]}));
+    let kids = node(&s, f).children;
+    assert_eq!(kids.len(), 3);
+    let w2 = *kids.iter().find(|k| **k != b && **k != w).unwrap();
+    let a2 = node(&s, w2).children[0];
+    assert!(is_margin_wrapper(s.doc().unwrap(), w2));
+    assert_eq!(s.selection(), vec![a2]);
+    assert_eq!(get(&mut s, a2)["margin"], json!([5.0, 5.0, 5.0, 5.0]));
+    // Move into another frame: the margin goes along.
+    let g = id(&ex(&mut s, "frame.create", json!({"x": 0, "y": 300, "width": 300, "height": 100, "props": {"layout": "vertical"}})));
+    ex(&mut s, "node.reparent", json!({"ids": [a2], "parent": g}));
+    assert_eq!(node(&s, g).children, vec![w2]);
+    assert_eq!(node(&s, w2).children, vec![a2]);
+    // Delete: the wrapper goes with the child.
+    ex(&mut s, "edit.delete", json!({"ids": [a]}));
+    assert!(!s.doc().unwrap().contains(w) && !s.doc().unwrap().contains(a));
+    assert_eq!(node(&s, f).children, vec![b]);
+    // Copy and paste keep the margin.
+    ex(&mut s, "edit.copy", json!({"ids": [a2]}));
+    ex(&mut s, "select.set", json!({"ids": [f]}));
+    ex(&mut s, "edit.paste", json!({}));
+    let pasted = s.selection();
+    assert_eq!(pasted.len(), 1);
+    assert_eq!(get(&mut s, pasted[0])["margin"], json!([5.0, 5.0, 5.0, 5.0]));
+}
+
+#[test]
+fn layout_settings_of_the_child_go_to_the_wrapper() {
+    let mut s = Session::new();
+    let (_, a, b) = al_frame(&mut s);
+    let w = wrapper(&ex(&mut s, "layout.setMargin", json!({"id": a, "margin": 5})));
+    // Fill: the wrapper fills the frame, the child fills the wrapper.
+    ex(&mut s, "node.set", json!({"id": a, "props": {"sizingH": "fill"}}));
+    assert_eq!((node(&s, w).child_layout.sizing_h, node(&s, a).child_layout.sizing_h), (Sizing::Fill, Sizing::Fill));
+    assert_eq!(bounds(&s, w)[2], 250.0);
+    assert_eq!(bounds(&s, a)[2], 240.0);
+    // Fixed: the child keeps a size, the wrapper hugs it.
+    ex(&mut s, "node.set", json!({"id": a, "props": {"sizingH": "fixed", "width": 60}}));
+    assert_eq!((node(&s, w).child_layout.sizing_h, node(&s, a).child_layout.sizing_h), (Sizing::Hug, Sizing::Fixed));
+    assert_eq!(bounds(&s, w)[2], 70.0);
+    // Absolute and constraints: on the wrapper.
+    ex(&mut s, "node.set", json!({"id": a, "props": {"absolute": true, "constraints": {"horizontal": "right"}}}));
+    let (wn, an) = (node(&s, w), node(&s, a));
+    assert!(wn.child_layout.absolute && !an.child_layout.absolute);
+    assert_eq!((wn.constraints.horizontal, an.constraints.horizontal), (HConstraint::Right, HConstraint::Left));
+    assert_eq!(bounds(&s, b)[0], 0.0, "the other child takes the flow");
+    // Anything else stays on the child.
+    ex(&mut s, "node.set", json!({"id": a, "props": {"fill": "#ff0000", "opacity": 0.5}}));
+    assert_eq!(node(&s, a).opacity, 0.5);
+    assert_eq!((node(&s, w).opacity, node(&s, w).fills.len()), (1.0, 0));
+}
+
+#[test]
+fn code_shows_the_margin_on_the_child() {
+    let mut s = Session::new();
+    let (f, a, b) = al_frame(&mut s);
+    ex(&mut s, "node.set", json!({"id": a, "props": {"name": "Card", "sizingH": "fill"}}));
+    ex(&mut s, "node.set", json!({"id": b, "props": {"name": "Side"}}));
+    let w = wrapper(&ex(&mut s, "layout.setMargin", json!({"id": a, "margin": [4, 8, 4, 8]})));
+    let doc = s.doc().unwrap();
+    // CSS of the child: its margin; of a child without one: none.
+    let css = crate::codegen::code_for(doc, a, crate::codegen::CodeLang::Css);
+    assert!(css.contains("margin: 4px 8px;"), "{css}");
+    assert!(!crate::codegen::code_for(doc, b, crate::codegen::CodeLang::Css).contains("margin"));
+    // HTML of the frame: no element for the wrapper, the child in its place with the margin and
+    // the wrapper's place in the flow.
+    let html = crate::codegen::code_for(doc, f, crate::codegen::CodeLang::Html);
+    assert!(!html.contains("Card · margin") && !html.contains("card-margin"), "no wrapper element: {html}");
+    assert_eq!(html.matches("<div").count(), 3, "frame, card, side: {html}");
+    let card = html.split(".card {").nth(1).and_then(|r| r.split('}').next()).unwrap();
+    assert!(card.contains("margin: 4px 8px;") && card.contains("flex: 1 1 0;"), "{card}");
+    // Inspect: the margin on the child, the wrapper marked.
+    let j = crate::inspect::node_json(doc, f, 3);
+    let kids = j["children"].as_array().unwrap();
+    let wj = kids.iter().find(|k| k["id"] == json!(w)).unwrap();
+    assert_eq!(wj["marginWrapper"], json!(true));
+    assert_eq!(wj["children"][0]["margin"], json!([4.0, 8.0, 4.0, 8.0]));
+}
+
+#[test]
+fn x_and_y_are_measured_in_the_frame_and_move_the_wrapper() {
+    let mut s = Session::new();
+    let (_, a, _) = al_frame(&mut s);
+    let w = wrapper(&ex(&mut s, "layout.setMargin", json!({"id": a, "margin": [4, 0, 0, 6]})));
+    let doc = s.doc().unwrap();
+    let xy = |doc: &figcraft_doc::Document, id| {
+        let c = doc.frame_relative(id).as_coeffs();
+        (c[4], c[5])
+    };
+    assert_eq!(xy(doc, a), (6.0, 4.0), "in the frame, not in the wrapper");
+    // An absolute child moved by X/Y: the wrapper moves, the child keeps its margin.
+    ex(&mut s, "node.set", json!({"id": a, "props": {"absolute": true}}));
+    ex(&mut s, "node.set", json!({"id": a, "props": {"x": 100, "y": 50}}));
+    let doc = s.doc().unwrap();
+    assert_eq!(xy(doc, a), (100.0, 50.0));
+    assert_eq!(xy(doc, w), (94.0, 46.0));
 }

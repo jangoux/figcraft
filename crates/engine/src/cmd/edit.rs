@@ -742,7 +742,7 @@ fn select_parent(s: &mut Session, _p: &Value) -> Result<Value> {
     let doc = s.doc()?;
     let mut ids: Vec<NodeId> = Vec::new();
     for i in s.selection() {
-        if let Some(p) = doc.node(i).and_then(|n| n.parent)
+        if let Some(p) = figcraft_doc::visible_parent(doc, i)
             && !doc.node(p).is_some_and(Node::is_page)
             && !ids.contains(&p)
         {
@@ -764,6 +764,8 @@ fn select_sibling(s: &mut Session, dir: i64) -> Result<Value> {
         s.set_selection(first.into_iter().collect());
         return Ok(json!({"selection": s.selection()}));
     };
+    // A wrapped child steps among its wrapper's siblings.
+    let cur = figcraft_doc::margin_outer(doc, cur);
     let parent = doc.get(cur)?.parent.ok_or_else(|| bad("select.next", "no parent"))?;
     let kids = &doc.get(parent)?.children;
     let idx = kids.iter().position(|c| *c == cur).unwrap_or(0) as i64;

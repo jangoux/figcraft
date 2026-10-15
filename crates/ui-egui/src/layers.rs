@@ -388,11 +388,18 @@ fn collect(doc: &Document, id: NodeId, depth: usize, dimmed: bool, locked: bool,
     let lock_kids = locked || n.locked;
     // Layers panel lists top of the stack first.
     for c in n.children.iter().rev() {
+        // A margin wrapper is listed as its child (it only adds space around it); a hidden or
+        // locked wrapper dims or locks its child's row.
+        let (dim, lock) = match doc.node(*c) {
+            Some(w) if figcraft_doc::is_margin_wrapper(doc, *c) => (hides_children(w, dim_kids), lock_kids || w.locked),
+            _ => (dim_kids, lock_kids),
+        };
+        let c = &figcraft_doc::geometry::past_margin(doc, *c);
         let Some(cn) = doc.node(*c) else { continue };
         let has_kids = !cn.children.is_empty() || matches!(cn.kind, NodeKind::BooleanOp { .. });
-        out.push(Row { id: *c, depth, has_kids, dimmed: dim_kids, locked_above: lock_kids });
+        out.push(Row { id: *c, depth, has_kids, dimmed: dim, locked_above: lock });
         if expanded.contains(c) && depth < 64 {
-            collect(doc, *c, depth + 1, dim_kids, lock_kids, expanded, out);
+            collect(doc, *c, depth + 1, dim, lock, expanded, out);
         }
     }
 }
@@ -403,7 +410,7 @@ fn matching(doc: &Document, id: NodeId, q: &str, out: &mut Vec<Row>) {
     for c in n.children.iter().rev() {
         let Some(cn) = doc.node(*c) else { continue };
         let name = if cn.name.is_empty() { cn.kind.label() } else { cn.name.as_str() };
-        if name.to_lowercase().contains(q) {
+        if name.to_lowercase().contains(q) && !figcraft_doc::is_margin_wrapper(doc, *c) {
             let above: Vec<&figcraft_doc::Node> = doc.ancestors(*c).iter().filter_map(|a| doc.node(*a)).filter(|a| !a.is_page()).collect();
             let dimmed = above.iter().any(|a| hides_children(a, false));
             out.push(Row { id: *c, depth: 0, has_kids: false, dimmed, locked_above: above.iter().any(|a| a.locked) });
@@ -461,7 +468,7 @@ pub(crate) fn key_nav(app: &mut FigApp, key: egui::Key, shift: bool) -> bool {
         Key::ArrowLeft => {
             if has_kids && filter.is_empty() && app.ui.expanded.contains(&cur) {
                 app.ui.expanded.remove(&cur);
-            } else if let Some(p) = doc.node(cur).and_then(|n| n.parent).filter(|p| *p != page) {
+            } else if let Some(p) = figcraft_doc::visible_parent(&doc, cur).filter(|p| *p != page) {
                 select(app, vec![p], p);
             }
         }

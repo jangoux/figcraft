@@ -523,6 +523,10 @@ impl DocState {
         let doc = self.doc.clone();
         let page = self.page;
         self.selection.retain(|id| doc.contains(*id) && doc.page_of(*id) == Some(page) && *id != page);
+        // A margin wrapper is never selected: its child is (see `figcraft_doc::margin`).
+        for id in &mut self.selection {
+            *id = figcraft_doc::geometry::past_margin(&doc, *id);
+        }
         let mut seen = BTreeSet::new();
         self.selection.retain(|id| seen.insert(*id));
         if let Some(te) = &self.text_edit
