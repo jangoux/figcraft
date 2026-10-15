@@ -2430,6 +2430,8 @@ fn style_fields(st: &TextStyle, f: &mut Fields) {
         // font size is a raw multiplier.
         LineHeight::Auto => o(vec![("value", fl(100.0)), ("units", e("PERCENT"))]),
         LineHeight::Percent(p) => o(vec![("value", fl(p / 100.0)), ("units", e("RAW"))]),
+        // Figma has no unitless mode: the same raw multiplier (it reads back as a percent).
+        LineHeight::Multiplier(m) => o(vec![("value", fl(m)), ("units", e("RAW"))]),
         LineHeight::Pixels(v) => o(vec![("value", fl(v)), ("units", e("PIXELS"))]),
     };
     let letter_spacing = match st.letter_spacing {

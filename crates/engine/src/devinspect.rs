@@ -593,7 +593,14 @@ fn typography(doc: &Document, n: &Node, t: &TextData) -> Section {
     let mut rows = vec![
         prop("Font", s.font_family.clone()).token(token),
         prop("Style", s.font_style.clone()),
-        prop("Size", num(s.font_size)).token(variable(doc, n, "fontSize")),
+        prop(
+            "Size",
+            match s.rem(doc.root_font_size()) {
+                Some(r) => format!("{} ({}rem)", num(s.font_size), crate::codegen::rem_num(r)),
+                None => num(s.font_size),
+            },
+        )
+        .token(variable(doc, n, "fontSize")),
         prop("Line height", s.line_height.label()),
         prop("Letter spacing", s.letter_spacing.label()),
     ];

@@ -1459,6 +1459,8 @@ mod fig_export_tests;
 #[cfg(test)]
 mod fig_import_tests;
 #[cfg(test)]
+mod font_size_rem_tests;
+#[cfg(test)]
 mod frame_guides_tests;
 #[cfg(test)]
 mod frame_label_tests;
@@ -1490,6 +1492,8 @@ mod invite_links_tests;
 mod keymap_tests;
 #[cfg(test)]
 mod library_variables_tests;
+#[cfg(test)]
+mod line_height_unit_tests;
 #[cfg(test)]
 mod live_access_tests;
 #[cfg(test)]

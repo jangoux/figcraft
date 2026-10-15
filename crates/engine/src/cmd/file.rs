@@ -104,6 +104,13 @@ pub fn specs() -> Vec<CommandSpec> {
             true,
             color_profile
         ),
+        spec!(
+            "file.rootFontSize",
+            "Root font size",
+            "{size? (pixels per rem, 1–1000)}  font sizes set in rem (layers and text styles) follow the new size; without `size`, returns the current one. Returns {size}",
+            true,
+            root_font_size
+        ),
         spec!("file.duplicate", "Duplicate file", "{}", false, |s, _| {
             let ds = s.ds()?;
             let mut d = (*ds.doc).clone();
@@ -712,6 +719,37 @@ fn color_profile(s: &mut Session, p: &Value) -> Result<Value> {
     let convert = boolean(p, "convert").unwrap_or(true);
     let changed = s.doc()?.color_profile != profile && s.doc_mut()?.set_color_profile(profile, convert);
     Ok(json!({"profile": profile.id(), "changed": changed}))
+}
+
+fn root_font_size(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "file.rootFontSize";
+    let Some(size) = num(p, "size") else { return Ok(json!({"size": s.doc()?.root_font_size()})) };
+    if !(size.is_finite() && (1.0..=1000.0).contains(&size)) {
+        return Err(bad(cmd, "size: pixels per rem, 1–1000"));
+    }
+    let doc = s.doc_mut()?;
+    let old = doc.root_font_size();
+    doc.root_font_size = size;
+    // What was set in rem keeps its rem value and takes the new size.
+    let follow = |st: &mut TextStyle| {
+        if let Some(r) = st.rem(old) {
+            st.set_rem(r, size);
+        }
+    };
+    let in_rem = |t: &TextData| t.style.rem(old).is_some() || t.runs.iter().any(|r| r.style.rem(old).is_some());
+    let ids: Vec<NodeId> = doc.nodes().filter(|n| n.kind.text().is_some_and(in_rem)).map(|n| n.id).collect();
+    for id in ids {
+        if let Some(t) = doc.get_mut(id)?.kind.text_mut() {
+            follow(&mut t.style);
+            t.runs.iter_mut().for_each(|r| follow(&mut r.style));
+        }
+    }
+    for st in &mut doc.styles {
+        if let StyleKind::Text { style } = &mut st.kind {
+            follow(style);
+        }
+    }
+    Ok(json!({"size": size}))
 }
 
 /// Save the file of the active tab (the main file for a branch tab, with its branches).

@@ -10,7 +10,11 @@ pub enum LineHeight {
     #[default]
     Auto,
     Pixels(f64),
+    /// A share of the font size, as Figma's percent: each run's own size (`150` = 1.5 × size).
     Percent(f64),
+    /// A unitless multiplier of the font size (CSS `line-height: 1.5`); resolves per run like
+    /// [`Percent`](Self::Percent), but stays unitless in code and in bound variables.
+    Multiplier(f64),
 }
 
 impl LineHeight {
@@ -20,6 +24,7 @@ impl LineHeight {
             LineHeight::Auto => font_size * natural_ratio,
             LineHeight::Pixels(v) => v.max(0.0),
             LineHeight::Percent(p) => font_size * p.max(0.0) / 100.0,
+            LineHeight::Multiplier(m) => font_size * m.max(0.0),
         }
     }
     pub fn label(self) -> String {
@@ -27,6 +32,16 @@ impl LineHeight {
             LineHeight::Auto => "Auto".into(),
             LineHeight::Pixels(v) => trim_num(v),
             LineHeight::Percent(p) => format!("{}%", trim_num(p)),
+            LineHeight::Multiplier(m) => format!("{}×", trim_num(m)),
+        }
+    }
+    /// The same unit holding `v` (a number variable bound to the field reads in the field's
+    /// unit; `Auto` reads as pixels).
+    pub fn with_value(self, v: f64) -> Self {
+        match self {
+            LineHeight::Percent(_) => LineHeight::Percent(v),
+            LineHeight::Multiplier(_) => LineHeight::Multiplier(v),
+            LineHeight::Auto | LineHeight::Pixels(_) => LineHeight::Pixels(v),
         }
     }
 }
@@ -225,6 +240,11 @@ pub struct TextStyle {
     /// The style name, e.g. "Regular", "Bold", "Semi Bold Italic".
     pub font_style: String,
     pub font_size: f64,
+    /// The size as typed in rem (`font_size` = this × the file's root font size); it counts only
+    /// while the two agree (see [`rem`](Self::rem)), so a size set in px elsewhere wins.
+    /// (`f32`: rem values need no more, and the style stays small.)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_size_rem: Option<f32>,
     pub line_height: LineHeight,
     pub letter_spacing: LetterSpacing,
     pub decoration: TextDecoration,
@@ -252,6 +272,7 @@ impl Default for TextStyle {
             font_family: "Inter".into(),
             font_style: "Regular".into(),
             font_size: 12.0,
+            font_size_rem: None,
             line_height: LineHeight::Auto,
             letter_spacing: LetterSpacing::default(),
             decoration: TextDecoration::None,
@@ -293,6 +314,7 @@ impl TextStyle {
         self.font_family == def.font_family
             && self.font_style == def.font_style
             && self.font_size == def.font_size
+            && self.font_size_rem == def.font_size_rem
             && self.line_height == def.line_height
             && self.letter_spacing == def.letter_spacing
             && self.decoration == def.decoration
@@ -302,6 +324,19 @@ impl TextStyle {
     }
 
     /// This style as a text style's definition (linked to nothing).
+    /// The font size in rem of `root` px when it was set in rem and still agrees with the px size.
+    pub fn rem(&self, root: f64) -> Option<f64> {
+        // To 6 decimals: what the f32 holds without its noise (1.1, not 1.100000023…).
+        let r = (f64::from(self.font_size_rem.filter(|r| r.is_finite() && *r > 0.0)?) * 1e6).round() / 1e6;
+        ((r * root - self.font_size).abs() <= 1e-5 * self.font_size.abs().max(1.0)).then_some(r)
+    }
+
+    /// Set the size to `rem` × `root` px (clamped to 1–5000 px), remembered in rem.
+    pub fn set_rem(&mut self, rem: f64, root: f64) {
+        self.font_size = (rem * root).clamp(1.0, 5000.0);
+        self.font_size_rem = Some((self.font_size / root) as f32);
+    }
+
     pub fn as_text_style(&self) -> TextStyle {
         TextStyle { style_id: None, link: None, ..self.clone() }
     }

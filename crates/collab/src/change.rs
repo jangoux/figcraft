@@ -203,6 +203,8 @@ pub enum DocProp {
     AnnotationCategories,
     /// Enabled libraries and the assets copied from them (whole).
     Libraries,
+    /// Pixels per rem for font sizes set in rem.
+    RootFontSize,
     /// Every style, in order (fallback).
     Styles,
     /// Style ids in panel order.

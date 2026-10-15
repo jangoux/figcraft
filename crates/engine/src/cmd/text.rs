@@ -213,8 +213,15 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("text.alignCenter", "Align center", "{ids?}", true, |s, p| para(s, p, |t| t.align_h = TextAlignH::Center)),
         spec!("text.alignRight", "Align right", "{ids?}", true, |s, p| para(s, p, |t| t.align_h = TextAlignH::Right)),
         spec!("text.alignJustify", "Justify", "{ids?}", true, |s, p| para(s, p, |t| t.align_h = TextAlignH::Justified)),
-        spec!("text.sizeUp", "Increase font size", "{ids?}", true, |s, p| style(s, p, |st| st.font_size = (st.font_size + 1.0).min(5000.0))),
-        spec!("text.sizeDown", "Decrease font size", "{ids?}", true, |s, p| style(s, p, |st| st.font_size = (st.font_size - 1.0).max(1.0))),
+        spec!("text.sizeUp", "Increase font size", "{ids?}", true, |s, p| style(s, p, |st| {
+            // A step of one pixel: the size is in px from now on.
+            st.font_size = (st.font_size + 1.0).min(5000.0);
+            st.font_size_rem = None;
+        })),
+        spec!("text.sizeDown", "Decrease font size", "{ids?}", true, |s, p| style(s, p, |st| {
+            st.font_size = (st.font_size - 1.0).max(1.0);
+            st.font_size_rem = None;
+        })),
         spec!("text.weightUp", "Increase font weight", "{ids?}", true, |s, p| step_weight(s, p, true)),
         spec!("text.weightDown", "Decrease font weight", "{ids?}", true, |s, p| step_weight(s, p, false)),
         spec!("text.lineHeightUp", "Increase line height", "{ids?}", true, |s, p| {
@@ -364,6 +371,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 let ids = req_targets("text.style", s, p)?;
                 let m = p.as_object().cloned().unwrap_or_default();
                 let doc = s.doc_mut()?;
+                let root = doc.root_font_size();
                 for i in ids {
                     let n = doc.get_mut(i)?;
                     let NodeKind::Text(t) = &mut n.kind else { return Err(bad("text.style", format!("{i} is not text"))) };
@@ -374,7 +382,7 @@ pub fn specs() -> Vec<CommandSpec> {
                         if matches!(k.as_str(), "id" | "ids" | "start" | "end") {
                             continue;
                         }
-                        super::props::apply_text_style("text.style", t, a, b, k, v)?;
+                        super::props::apply_text_style("text.style", t, a, b, k, v, root)?;
                     }
                 }
                 ok()

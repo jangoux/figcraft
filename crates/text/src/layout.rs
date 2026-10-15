@@ -129,6 +129,7 @@ fn deco_len(m: DecorationLength, size: f64, auto: f64) -> f64 {
         DecorationLength::Auto => auto,
         DecorationLength::Pixels(v) => v,
         DecorationLength::Percent(p) => size * p / 100.0,
+        DecorationLength::Multiplier(m) => size * m,
     };
     if v.is_finite() { v } else { auto }
 }

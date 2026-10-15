@@ -1068,3 +1068,25 @@ fn local_samples_round_trip() {
         assert_same(&a, &b, &format!("{} (export warnings: {warnings:?})", p.display()));
     }
 }
+
+#[test]
+fn a_line_height_multiplier_goes_out_as_the_same_share_of_the_font_size() {
+    // Figma has no unitless line height: 1.5× is written as the raw 1.5 and reads back as 150 %,
+    // which lays out the same.
+    let mut doc = generate(3);
+    let texts: Vec<NodeId> = doc.nodes().filter(|n| n.kind.text().is_some()).map(|n| n.id).collect();
+    assert!(!texts.is_empty());
+    for id in &texts {
+        if let Some(t) = doc.get_mut(*id).ok().and_then(|n| n.kind.text_mut()) {
+            t.style.line_height = LineHeight::Multiplier(1.5);
+            for r in &mut t.runs {
+                r.style.line_height = LineHeight::Multiplier(1.5);
+            }
+        }
+    }
+    let (bytes, _) = export(&doc, None).unwrap();
+    let (back, _) = import(&bytes, "x").unwrap();
+    let back_lh: Vec<LineHeight> = back.nodes().filter_map(|n| n.kind.text()).map(|t| t.style.line_height).collect();
+    assert_eq!(back_lh.len(), texts.len());
+    assert!(back_lh.iter().all(|l| *l == LineHeight::Percent(150.0)), "{back_lh:?}");
+}

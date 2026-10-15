@@ -184,6 +184,9 @@ pub fn node_json(doc: &Document, id: NodeId, depth: usize) -> Value {
             o.insert("fontFamily".into(), json!(t.style.font_family));
             o.insert("fontStyle".into(), json!(t.style.font_style));
             o.insert("fontSize".into(), json!(t.style.font_size));
+            if let Some(r) = t.style.rem(doc.root_font_size()) {
+                o.insert("fontSizeRem".into(), json!(r));
+            }
             if !t.style.variations.is_empty() {
                 o.insert("fontVariations".into(), json!(t.style.variations));
             }
