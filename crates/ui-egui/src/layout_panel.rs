@@ -53,6 +53,9 @@ pub fn layout_section(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[Node
     if let Some(Some(l)) = &al {
         alignment(app, ui, &ids, l);
         spacing(app, ui, &ids, l);
+        if l.mode == LayoutMode::Grid {
+            grid_columns(app, ui, doc, &ids, l, in_instance);
+        }
         ui.add_enabled_ui(!in_instance, |ui| {
             advanced(app, ui, &ids, l);
             if l.mode == LayoutMode::Grid && sel.len() == 1 {
@@ -458,15 +461,85 @@ fn spacing(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], l: &AutoLayout) {
             });
         });
     }
-    if l.mode == LayoutMode::Grid {
-        widgets::sublabels(ui, tr("Columns"), Some(tr("Rows")));
-        row(ui, 32.0, |ui| {
-            let e = widgets::number_field(ui, Id::new("al_cols"), Lead::None, Some(f64::from(l.grid_columns)), "", col, 1.0);
-            app.field(ids, "gridColumns", e, |v| json!(v.max(1.0)));
-            let e = widgets::number_field(ui, Id::new("al_rows"), Lead::None, Some(f64::from(l.grid_rows)), "", col, 1.0);
-            app.field(ids, "gridRows", e, |v| json!(v.max(1.0)));
-        });
+}
+
+/// A grid's columns: a count, or responsive (as many columns of a minimum width as the frame's
+/// width holds; auto-fill keeps empty columns, auto-fit lets the children stretch over them). A
+/// frame hugging its width can't count columns from it: the responsive settings are disabled then.
+/// In an instance only the responsive setting is its own.
+fn grid_columns(app: &mut FigApp, ui: &mut Ui, doc: &Document, ids: &[NodeId], l: &AutoLayout, in_instance: bool) {
+    let col = widgets::col_width(ui.available_width());
+    let hugs = ids.iter().any(|i| doc.node(*i).is_some_and(|n| n.child_layout.sizing_h == Sizing::Hug));
+    let need_width = tr("Responsive columns need a fixed or fill width");
+    let from_main = tr("In an instance, this comes from the main component");
+    widgets::sublabels(ui, tr("Columns"), None);
+    row(ui, 32.0, |ui| {
+        let auto = l.column_auto.is_some();
+        // Turning auto on can't help a hugging frame; turning it off always can.
+        ui.add_enabled_ui(auto || !hugs, |ui| {
+            if let Some(i) = widgets::segmented_text(ui, &[tr("Count"), tr("Auto")], usize::from(auto)) {
+                match (i, auto) {
+                    (0, true) => {
+                        app.run("layout.clearGridAuto", json!({"ids": ids}));
+                    }
+                    (1, false) => {
+                        // Start from the columns' current width, so nothing moves until it's changed.
+                        let width = ids
+                            .first()
+                            .and_then(|id| figcraft_layout::grid_geometry(doc, *id))
+                            .and_then(|g| g.columns.first().map(|(a, b)| (b - a).round()))
+                            .filter(|w| w.is_finite() && *w >= 1.0)
+                            .unwrap_or(100.0);
+                        app.run("layout.setGridAuto", json!({"ids": ids, "min": width}));
+                    }
+                    _ => {}
+                }
+            }
+        })
+        .response
+        .on_disabled_hover_text(need_width);
+    });
+    match l.column_auto {
+        Some(a) => {
+            widgets::sublabels(ui, tr("Min width"), Some(tr("Rows")));
+            row(ui, 32.0, |ui| {
+                ui.add_enabled_ui(!hugs, |ui| {
+                    let e = widgets::number_field(ui, Id::new("al_col_min"), Lead::None, Some(a.min), "", col, 1.0);
+                    app.field_run(e, "layout.setGridAuto", |v| json!({"ids": ids, "min": v.clamp(1.0, 1e6), "fit": a.fit}));
+                })
+                .response
+                .on_disabled_hover_text(need_width);
+                ui.add_enabled_ui(!in_instance, |ui| rows_field(app, ui, ids, l, col)).response.on_disabled_hover_text(from_main);
+            });
+            row(ui, 32.0, |ui| {
+                ui.add_enabled_ui(!hugs, |ui| {
+                    if let Some(i) = widgets::segmented_text(ui, &[tr("Auto-fill"), tr("Auto-fit")], usize::from(a.fit)) {
+                        app.run("layout.setGridAuto", json!({"ids": ids, "min": a.min, "fit": i == 1}));
+                    }
+                })
+                .response
+                .on_disabled_hover_text(need_width);
+            });
+        }
+        None => {
+            widgets::sublabels(ui, tr("Count"), Some(tr("Rows")));
+            ui.add_enabled_ui(!in_instance, |ui| {
+                row(ui, 32.0, |ui| {
+                    let e = widgets::number_field(ui, Id::new("al_cols"), Lead::None, Some(f64::from(l.grid_columns)), "", col, 1.0);
+                    app.field(ids, "gridColumns", e, |v| json!(v.max(1.0)));
+                    rows_field(app, ui, ids, l, col);
+                });
+            })
+            .response
+            .on_disabled_hover_text(from_main);
+        }
     }
+}
+
+/// A grid's row count (the least it has: rows grow with the children).
+fn rows_field(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], l: &AutoLayout, col: f32) {
+    let e = widgets::number_field(ui, Id::new("al_rows"), Lead::None, Some(f64::from(l.grid_rows)), "", col, 1.0);
+    app.field(ids, "gridRows", e, |v| json!(v.max(1.0)));
 }
 
 /// Whether the frame's inside stroke takes up space, and which child paints on top where children
