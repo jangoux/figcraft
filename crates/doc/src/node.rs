@@ -485,6 +485,10 @@ pub struct Node {
     /// A nested instance inside a main component whose properties show on the main's instances.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub exposed: bool,
+    /// A FigCraft margin: this plain auto layout frame only adds space (its padding) around its one
+    /// child (see [`crate::margin`]). Stored as a standard frame, so other apps see a frame.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub margin_wrapper: bool,
 
     /// Handoff status of a frame or section (shown as a badge next to its name).
     #[serde(default, skip_serializing_if = "DevStatus::is_none")]
@@ -618,6 +622,7 @@ impl Node {
             constrain_proportions: false,
             source: None,
             exposed: false,
+            margin_wrapper: false,
 
             dev_status: DevStatus::None,
             dev_changed: false,

@@ -353,6 +353,11 @@ fn every_command_survives_junk_params() {
         // Rotation origins and placing with a tool as junk.
         json!({"tool": [1], "x": 1e308, "y": "NaN", "reset": "maybe", "on": {"x": 1}}),
         json!({"tool": "frame", "x": -1e308, "y": 1e308, "reset": true, "on": "yes"}),
+        // Margins: sides, counts and kinds as junk.
+        json!({"id": 1, "margin": [1e308, -1e308, "NaN", null]}),
+        json!({"id": 2, "margin": [1, 2, 3]}),
+        json!({"id": 3, "margin": {"top": 1}}),
+        json!({"id": 2, "margin": "-Infinity"}),
     ];
     for spec in all_commands() {
         if matches!(
@@ -531,4 +536,41 @@ fn guides_add_move_remove() {
     assert_eq!(guides(&s).len(), 1, "junk never removes the first guide");
     s.execute("guide.clear", &json!({})).unwrap();
     assert!(guides(&s).is_empty());
+}
+
+#[test]
+fn margins_survive_junk_on_auto_layout_children() {
+    // The sweep's layers aren't in auto layout frames; here the wrap, update and unwrap paths get
+    // junk too.
+    let margins = [
+        json!(1e308),
+        json!(-1e308),
+        json!("1e999"),
+        json!([1e308, 0, -0.0, "5px"]),
+        json!([0, 0, 0, 0]),
+        json!([null, 1, 2, 3]),
+        json!([[1], 1, 2, 3]),
+        json!(true),
+        json!(0),
+    ];
+    let mut s = sess();
+    let f = id(&s.execute("frame.create", &json!({"x": 0, "y": 0, "width": 100, "height": 100, "props": {"layout": "grid"}})).unwrap());
+    let a = id(&s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 10, "height": 10, "parent": f})).unwrap());
+    for m in margins.iter().chain(margins.iter()) {
+        for target in [a, f, NodeId(0)] {
+            if let Err(EngineError::Internal { cmd, msg }) = s.execute("layout.setMargin", &json!({"id": target, "margin": m})) {
+                panic!("{cmd} panicked on {m}: {msg}");
+            }
+            if let Err(EngineError::Internal { cmd, msg }) = s.execute("layout.getMargin", &json!({"id": target})) {
+                panic!("{cmd} panicked on {target}: {msg}");
+            }
+        }
+        // Whatever happened, the rectangle is still there, wrapped at most once.
+        let doc = s.doc().unwrap();
+        assert!(doc.contains(a));
+        let parent = doc.node(a).unwrap().parent.unwrap();
+        assert!(parent == f || doc.node(parent).unwrap().parent == Some(f));
+        let margin = &s.execute("layout.getMargin", &json!({"id": a})).unwrap()["margin"];
+        assert!(margin.as_array().unwrap().iter().all(|v| v.as_f64().is_some_and(|x| x.is_finite() && (0.0..=1e6).contains(&x))), "{margin}");
+    }
 }

@@ -171,6 +171,7 @@ node_props! {
     ConstrainProportions => constrain_proportions,
     Source => source,
     Exposed => exposed,
+    MarginWrapper => margin_wrapper,
     DevStatus => dev_status,
     DevChanged => dev_changed,
     DevNote => dev_note,

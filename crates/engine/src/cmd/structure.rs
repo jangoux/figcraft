@@ -125,6 +125,18 @@ pub(crate) fn wrap_boolean(s: &mut Session, p: &Value, op: BoolOp) -> Result<Val
     wrap(s, p, Wrap::Bool(op))
 }
 
+/// Wrap layer `id` alone in a new frame named `name` at its place (what `object.frameSelection`
+/// does); returns the frame. The selection becomes the frame.
+pub(crate) fn wrap_in_frame(s: &mut Session, id: NodeId, name: &str) -> Result<NodeId> {
+    let r = wrap(s, &json!({"ids": [id], "name": name}), Wrap::Frame)?;
+    id_of(&r["id"]).ok_or_else(|| EngineError::Other("frame selection failed".into()))
+}
+
+/// Remove frame `id`, its layers taking its place (what `object.removeFrame` does).
+pub(crate) fn remove_frame(s: &mut Session, id: NodeId) -> Result<()> {
+    ungroup(s, &json!({"ids": [id]})).map(|_| ())
+}
+
 /// Wrap the selection in a new container at the topmost selected layer's place.
 fn wrap(s: &mut Session, p: &Value, w: Wrap) -> Result<Value> {
     let ids = req_targets("object.group", s, p)?;

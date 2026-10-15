@@ -1,6 +1,6 @@
 # Auto layout and constraints parity
 
-> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-13 · **Change:** minor (core editor leftovers: auto gap handles, wrapped-line alignment; behaviour suite written from the public documentation, every rule's status; fixes and the missing settings it found) · **Target:** Figma Design (desktop app 126.10.7)
+> **Last reviewed:** 2026-10-11 · **Last updated:** 2026-10-14 · **Change:** minor (margins on auto layout children, a FigCraft-only extension stored as standard frames: core commands; core editor leftovers: auto gap handles, wrapped-line alignment; behaviour suite written from the public documentation, every rule's status; fixes and the missing settings it found) · **Target:** Figma Design (desktop app 126.10.7)
 
 Auto layout is the most used layout feature in Figma and the one where small differences (a
 hugging frame one pixel off, text wrapping at another width) break real files. **Breadth ~98%,
@@ -72,11 +72,13 @@ Status: **pass** (a case in the suite holds), **fixed** (the suite found a diver
 | Suggest auto layout / "Add auto layout" on a selection | done | |
 | Real Figma files laid out identically | **not checked** | needs `.fig` or REST import of real files ([gaps](gaps.md) #1, #3) |
 | Performance: re-flow only where sizes or places changed | done | measured in `cargo xtask bench` (components at scale) |
+| Margins on auto layout children (**FigCraft-only extension**; Figma has none) | partial | `layout.setMargin` / `layout.getMargin` (`cmd/margin_tests.rs`); stored as a plain auto layout wrapper frame named "<child> · margin" whose padding is the margin, so files stay Figma-compatible. Design panel, layers, canvas, CSS and import healing to come. Known limitation: min/max stay on the child and bound the child, not the child plus its margin |
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-14 | minor | Margins, core (M-margin.1): a FigCraft-only extension, since Figma has no margin. `layout.setMargin {id, margin}` wraps an auto layout child in a plain auto layout frame (no fills, strokes or effects, Hug except where the child filled, flagged `margin_wrapper` and named "<child> · margin") whose padding is the margin, moving the child's Fill, absolute position, constraints and grid cell to it; later margins change the padding; 0 removes the wrapper and gives them back, or keeps a wrapper that was given a look or layers of its own as an ordinary frame. `layout.getMargin` reads it from the child or the wrapper. The layout engine is unchanged; the result renders like a frame with padding built by hand. Known limitation: min/max stay on the child. Numbers unchanged. |
 | 2026-10-13 | minor | Auto layout, on-canvas handles of automatic gaps (M2): the handle between spread rows or columns (and between items with an auto gap) shows the distance the layout gives the gap instead of the stored value, and dragging it makes the gap a fixed one from there, as typing a gap in the panel does; one undo step (`gap_handle_tests`). Before, the drag changed a value that had no effect. The documentation is silent on dragging an automatic gap. Numbers unchanged. |
 | 2026-10-13 | minor | Auto layout, wrapped-line alignment (M2): a wrapping layout's lines (rows of a horizontal one, columns of a vertical one) are packed where the cross alignment says (start, centre, end; before, they always sat at the start), stretch when every child fills across the flow, or take the free space between them (`contentAlign: spaceBetween`, the Design panel's Row/Column gap mode, the alignment pad lighting the whole cross axis). Read from REST JSON and `.fig`, written to `.fig`, `align-content` in CSS, an instance override with the other alignment settings. 13 hand-computed layout cases and command tests. Numbers unchanged. |
 | 2026-10-11 | minor | Behaviour suite from the public documentation (64 layout cases, 8 command tests). Fixed: padding floor, inside-only included strokes (and included by default), auto gaps stop at 0, grid `fr` like CSS `fr`, canvas stacking actually drawn and hit. Added: auto gaps evenly/around, vertical wrap, grid cell alignment, strokes and canvas stacking controls. Breadth 95% → 98%, ready 68% → 74%, remaining 6–12 h → 3–6 h |

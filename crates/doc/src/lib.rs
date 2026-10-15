@@ -14,6 +14,7 @@ pub mod geometry;
 pub mod handoff;
 pub mod ids;
 pub mod library;
+pub mod margin;
 pub mod node;
 pub mod props;
 pub mod proto;
@@ -29,6 +30,7 @@ pub use figcraft_color as color;
 pub use figcraft_geom as geom;
 pub use handoff::*;
 pub use library::*;
+pub use margin::*;
 pub use node::*;
 pub use props::*;
 pub use styles::*;
@@ -1142,6 +1144,8 @@ mod effects_tests;
 mod handoff_tests;
 #[cfg(test)]
 mod ids_tests;
+#[cfg(test)]
+mod margin_tests;
 #[cfg(test)]
 mod print_tests;
 #[cfg(test)]
