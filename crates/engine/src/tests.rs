@@ -353,6 +353,12 @@ fn every_command_survives_junk_params() {
         // Rotation origins and placing with a tool as junk.
         json!({"tool": [1], "x": 1e308, "y": "NaN", "reset": "maybe", "on": {"x": 1}}),
         json!({"tool": "frame", "x": -1e308, "y": 1e308, "reset": true, "on": "yes"}),
+        // Responsive grid columns: minimums and fit as junk.
+        json!({"id": 1, "min": "NaN", "fit": "yes"}),
+        json!({"ids": [1, 2], "min": 0, "fit": 1}),
+        json!({"id": 1, "min": -1e308, "fit": null}),
+        json!({"id": 1, "min": 1e308, "fit": [true]}),
+        json!({"id": 1, "min": {"x": 1}, "fit": {"x": 1}}),
     ];
     for spec in all_commands() {
         if matches!(

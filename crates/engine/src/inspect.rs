@@ -81,7 +81,14 @@ pub fn node_json(doc: &Document, id: NodeId, depth: usize) -> Value {
             }
         }
         if let Some(l) = &n.layout {
-            o.insert("layout".into(), camel(serde_json::to_value(l).unwrap_or(Value::Null)));
+            let mut layout = camel(serde_json::to_value(l).unwrap_or(Value::Null));
+            // A grid's column count now (responsive columns follow the width; `columnAuto` says how).
+            if l.mode == figcraft_doc::LayoutMode::Grid
+                && let Some(m) = layout.as_object_mut()
+            {
+                m.insert("effectiveColumns".into(), json!(figcraft_layout::effective_columns(doc, n.id)));
+            }
+            o.insert("layout".into(), layout);
         }
         let parent_al = n.parent.and_then(|p| doc.node(p)).is_some_and(|p| p.layout.is_some());
         if n.layout.is_some() || parent_al || matches!(n.kind, NodeKind::Text(_)) {

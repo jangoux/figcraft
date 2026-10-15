@@ -535,11 +535,20 @@ fn css_tracks(specs: &[GridTrack], count: usize, hug: bool) -> String {
     }
 }
 
-/// CSS grid for a grid auto layout frame. Tracks start at the top left (`*-content: start`: CSS
-/// would otherwise stretch `auto` tracks into the free space); the frame's alignment places each
-/// child in its cell (`*-items`; a child's own alignment and filling are set on the child).
+/// Responsive grid columns as CSS: `repeat(auto-fill | auto-fit, minmax(min, 1fr))`.
+fn auto_tracks(n: &Node) -> Option<String> {
+    let a = figcraft_layout::auto_columns(n)?;
+    Some(format!("repeat({}, minmax({}px, 1fr))", if a.fit { "auto-fit" } else { "auto-fill" }, num(a.min)))
+}
+
+/// CSS grid for a grid auto layout frame (`hug`: its width / height are left out). Tracks start
+/// at the top left (`*-content: start`: CSS would otherwise stretch `auto` tracks into the free
+/// space); the frame's alignment places each child in its cell (`*-items`; a child's own alignment
+/// and filling are set on the child).
 fn grid_decls(doc: &Document, n: &Node, l: &AutoLayout, hug: (bool, bool), t: &mut Tokens) -> Vec<(&'static str, String)> {
     let px = |v: f64| format!("{}px", num(v));
+    // Fill tracks size to their content on an axis the frame hugs.
+    let hugs = (n.child_layout.sizing_h == Sizing::Hug, n.child_layout.sizing_v == Sizing::Hug);
     let (columns, rows) = grid_counts(doc, n.id).unwrap_or((1, 1));
     let items = |a: CellAlign| match a {
         CellAlign::Min => "start",
@@ -551,9 +560,17 @@ fn grid_decls(doc: &Document, n: &Node, l: &AutoLayout, hug: (bool, bool), t: &m
         // The box hugs its tracks (a block box would take its container's width).
         out.push(("width", "fit-content".to_string()));
     }
+    if let Some(auto) = auto_tracks(n) {
+        out.push(("grid-template-columns", auto));
+        // The rows grow with the width (fewer columns, more rows): the frame's own, then more like
+        // the ones FigCraft adds (`1fr`, `auto` when it hugs its height).
+        out.push(("grid-template-rows", css_tracks(&l.row_tracks, (l.grid_rows as usize).clamp(1, 1000), hugs.1)));
+        out.push(("grid-auto-rows", if hugs.1 { "auto" } else { "1fr" }.to_string()));
+    } else {
+        out.push(("grid-template-columns", css_tracks(&l.column_tracks, columns, hugs.0)));
+        out.push(("grid-template-rows", css_tracks(&l.row_tracks, rows, hugs.1)));
+    }
     out.extend([
-        ("grid-template-columns", css_tracks(&l.column_tracks, columns, hug.0)),
-        ("grid-template-rows", css_tracks(&l.row_tracks, rows, hug.1)),
         ("column-gap", tok(doc, n, &["gap"], px(l.gap), t)),
         ("row-gap", tok(doc, n, &["crossGap"], px(l.cross_gap), t)),
         ("padding", padding(doc, n, l, t)),
@@ -595,9 +612,22 @@ fn grid_fills(n: &Node, parent: &Node) -> (bool, bool) {
 
 /// How child `n` sits in its grid frame (geometry `g`): its cell, when the grid places anything
 /// other than one child per cell in reading order (then every child gets its lines: CSS
-/// auto-placement would fill holes FigCraft leaves empty), and its alignment in the cell.
+/// auto-placement would fill holes FigCraft leaves empty), and its alignment in the cell. With
+/// responsive columns the cells move with the width, so children get only their spans (anchors
+/// can't be written for every width: CSS would add columns for an anchor past the last one).
 fn grid_item_decls(doc: &Document, n: &Node, parent: Option<&Node>, g: &figcraft_layout::GridGeometry) -> String {
     let mut out = String::new();
+    if parent.and_then(figcraft_layout::auto_columns).is_some() {
+        if let Some(c) = g.cells.iter().find(|c| c.id == n.id) {
+            if c.column_span > 1 {
+                out.push_str(&format!("grid-column: span {};\n", c.column_span));
+            }
+            if c.row_span > 1 {
+                out.push_str(&format!("grid-row: span {};\n", c.row_span));
+            }
+        }
+        return out + &cell_align_decls(n, parent);
+    }
     let placed = g.cells.iter().any(|c| {
         doc.node(c.id).is_some_and(|k| k.child_layout.grid_column.is_some() || k.child_layout.grid_row.is_some())
             || c.column_span > 1
@@ -607,6 +637,12 @@ fn grid_item_decls(doc: &Document, n: &Node, parent: Option<&Node>, g: &figcraft
         out.push_str(&format!("grid-column: {} / span {};\n", c.column + 1, c.column_span));
         out.push_str(&format!("grid-row: {} / span {};\n", c.row + 1, c.row_span));
     }
+    out + &cell_align_decls(n, parent)
+}
+
+/// Grid child `n`'s alignment in its cell: stretched when it fills, else its own (if any).
+fn cell_align_decls(n: &Node, parent: Option<&Node>) -> String {
+    let mut out = String::new();
     let self_align = |a: CellAlign| match a {
         CellAlign::Min => "start",
         CellAlign::Center => "center",

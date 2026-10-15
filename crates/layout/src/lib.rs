@@ -15,8 +15,8 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 use figcraft_doc::{
-    AutoLayout, CellAlign, ContentAlign, CrossAlign, Document, GridAlign, GridKind, HConstraint, LayoutGrid, LayoutMode, MainAlign, NodeId, NodeKind,
-    Sizing, StrokeAlign, TextAutoResize, VConstraint,
+    AutoColumns, AutoLayout, CellAlign, ContentAlign, CrossAlign, Document, GridAlign, GridKind, HConstraint, LayoutGrid, LayoutMode, MainAlign,
+    NodeId, NodeKind, Sizing, StrokeAlign, TextAutoResize, VConstraint,
 };
 use figcraft_geom::{Affine, Point, Rect};
 
@@ -617,11 +617,61 @@ impl GridGeometry {
     }
 }
 
-/// Place grid children in cells: children with an anchor column and row go there first; the rest
-/// flow left to right, top to bottom into the next free cells that fit their spans. Returns the
-/// cells (in child order) and the row count (at least the frame's row count).
-pub fn grid_place(doc: &Document, al: &AutoLayout, kids: &[NodeId]) -> (Vec<GridCell>, usize) {
-    let cols = (al.grid_columns as usize).clamp(1, MAX_TRACKS);
+/// Grid frame `f`'s responsive columns, when they apply: set, with a usable minimum, and a width
+/// that comes from outside (Fixed, or Fill in its parent). A frame hugging its width counts its
+/// columns from `grid_columns` instead (its width would depend on its own column count).
+pub fn auto_columns(f: &figcraft_doc::Node) -> Option<AutoColumns> {
+    let al = f.layout.as_ref().filter(|l| l.mode == LayoutMode::Grid)?;
+    al.column_auto.filter(|a| a.min.is_finite() && a.min > 0.0 && f.child_layout.sizing_h != Sizing::Hug)
+}
+
+/// Grid frame `frame`'s column count now: `grid_columns`, or with responsive columns as many as
+/// its width holds (`floor((inner + gap) / (min + gap))`, at least 1), and for `fit` no more than
+/// the children fill (by their column spans).
+pub fn effective_columns(doc: &Document, frame: NodeId) -> u32 {
+    let Some(f) = doc.node(frame) else { return 1 };
+    column_count(f, &flow_children(doc, frame), doc) as u32
+}
+
+fn column_count(f: &figcraft_doc::Node, kids: &[NodeId], doc: &Document) -> usize {
+    let Some(al) = f.layout.as_ref() else { return 1 };
+    let fixed = (al.grid_columns as usize).clamp(1, MAX_TRACKS);
+    let Some(a) = auto_columns(f) else { return fixed };
+    let (_, pr, _, pl) = insets(f, al);
+    let inner = finite_or_zero(clamp_size(f.width, f.child_layout.min_w, f.child_layout.max_w) - pl - pr).max(0.0);
+    let gap = finite_or_zero(al.gap).max(0.0);
+    let min = a.min.min(1e7);
+    // A hair of slack so widths exactly at a breakpoint (n·min + (n−1)·gap) get the n columns.
+    let fits = ((inner + gap) / (min + gap) + 1e-9).floor();
+    let cols = if fits.is_finite() { fits.clamp(1.0, MAX_TRACKS as f64) as usize } else { 1 };
+    if !a.fit {
+        return cols;
+    }
+    let used: usize = kids.iter().map(|k| doc.node(*k).map_or(1, |n| (n.child_layout.column_span() as usize).min(cols))).sum();
+    used.clamp(1, cols)
+}
+
+/// The column tracks a grid lays out with `cols` columns: its own, or with responsive columns
+/// `cols` equal `1fr` tracks that never get narrower than the minimum.
+fn column_specs(f: &figcraft_doc::Node, al: &AutoLayout, cols: usize, gap: f64) -> Vec<figcraft_doc::GridTrack> {
+    let Some(a) = auto_columns(f) else { return al.column_tracks.clone() };
+    let (_, pr, _, pl) = insets(f, al);
+    let width = clamp_size(f.width, f.child_layout.min_w, f.child_layout.max_w);
+    let share = (width - pl - pr - gap * cols.saturating_sub(1) as f64) / cols.max(1) as f64;
+    let min = a.min.min(1e7);
+    let track = if share.is_finite() && share >= min { figcraft_doc::GridTrack::fill(1.0) } else { figcraft_doc::GridTrack::fixed(min) };
+    vec![track; cols]
+}
+
+/// Place grid frame `frame`'s children `kids` in cells: children with an anchor column and row go
+/// there first; the rest flow left to right, top to bottom into the next free cells that fit their
+/// spans. With responsive columns, an anchor column past the last column is placed automatically
+/// (as in CSS); otherwise it is clamped to the last. Returns the cells (in child order) and the row
+/// count (at least the frame's row count).
+pub fn grid_place(doc: &Document, frame: NodeId, kids: &[NodeId]) -> (Vec<GridCell>, usize) {
+    let Some((f, al)) = doc.node(frame).and_then(|f| Some((f, f.layout.as_ref()?))) else { return (Vec::new(), 0) };
+    let cols = column_count(f, kids, doc);
+    let auto = auto_columns(f).is_some();
     let max_rows = (MAX_GRID_CELLS / cols).clamp(1, MAX_TRACKS);
     let mut occ: Vec<Vec<bool>> = Vec::new();
     let free = |occ: &Vec<Vec<bool>>, c: usize, r: usize, cs: usize, rs: usize| {
@@ -641,7 +691,8 @@ pub fn grid_place(doc: &Document, al: &AutoLayout, kids: &[NodeId]) -> (Vec<Grid
         let cl = doc.node(id).map(|n| n.child_layout.clone()).unwrap_or_default();
         let cs = (cl.column_span() as usize).min(cols);
         let rs = (cl.row_span() as usize).min(max_rows);
-        (cl.grid_column.map(|c| (c as usize).min(cols - cs)), cl.grid_row.map(|r| (r as usize).min(max_rows - rs)), cs, rs)
+        let column = cl.grid_column.map(|c| c as usize).filter(|c| !auto || *c < cols);
+        (column.map(|c| c.min(cols - cs)), cl.grid_row.map(|r| (r as usize).min(max_rows - rs)), cs, rs)
     };
     let mut placed: Vec<Option<GridCell>> = vec![None; kids.len()];
     // 1. Fully anchored children.
@@ -792,9 +843,10 @@ pub fn grid_geometry(doc: &Document, frame: NodeId) -> Option<GridGeometry> {
     }
     let (pt, pr, pb, pl) = insets(f, al);
     let kids = flow_children(doc, frame);
-    let (cells, rows) = grid_place(doc, al, &kids);
-    let cols = (al.grid_columns as usize).clamp(1, MAX_TRACKS);
+    let (cells, rows) = grid_place(doc, frame, &kids);
+    let cols = column_count(f, &kids, doc);
     let gx = finite_or_zero(al.gap).max(0.0);
+    let col_specs = column_specs(f, al, cols, gx);
     let gy = finite_or_zero(al.cross_gap).max(0.0);
     let hug_w = f.child_layout.sizing_h == Sizing::Hug;
     let hug_h = f.child_layout.sizing_v == Sizing::Hug;
@@ -806,13 +858,13 @@ pub fn grid_geometry(doc: &Document, frame: NodeId) -> Option<GridGeometry> {
         ws.push(if cl.sizing_h == Sizing::Fill && !hug_w { cl.min_w.unwrap_or(0.0) } else { w });
         hs.push(if cl.sizing_v == Sizing::Fill && !hug_h { cl.min_h.unwrap_or(0.0) } else { h });
     }
-    let col_content = track_content(&cells, &ws, &al.column_tracks, cols, gx, true, hug_w);
+    let col_content = track_content(&cells, &ws, &col_specs, cols, gx, true, hug_w);
     let row_content = track_content(&cells, &hs, &al.row_tracks, rows, gy, false, hug_h);
     let gaps_w = gx * cols.saturating_sub(1) as f64;
     let gaps_h = gy * rows.saturating_sub(1) as f64;
     let avail_w = (!hug_w).then_some(f.width - pl - pr - gaps_w);
     let avail_h = (!hug_h).then_some(f.height - pt - pb - gaps_h);
-    let col_w = resolve_tracks(&al.column_tracks, &col_content, avail_w);
+    let col_w = resolve_tracks(&col_specs, &col_content, avail_w);
     let row_h = resolve_tracks(&al.row_tracks, &row_content, avail_h);
     let cl = &f.child_layout;
     let width = if hug_w { col_w.iter().sum::<f64>() + gaps_w + pl + pr } else { f.width };
@@ -1096,6 +1148,8 @@ pub fn grid_snap_lines_in(doc: &Document, frame: NodeId, xf: Affine) -> (Vec<f64
     (xs, ys)
 }
 
+#[cfg(test)]
+mod auto_columns_tests;
 #[cfg(test)]
 mod behaviour_tests;
 #[cfg(test)]

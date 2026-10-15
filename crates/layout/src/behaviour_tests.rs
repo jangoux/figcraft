@@ -125,6 +125,7 @@ fn build(c: &Case<'_>) -> (Document, NodeId, Vec<NodeId>, FakeMeasure) {
             grid_rows: f.rows.len().max(1) as u32,
             column_tracks: f.columns.to_vec(),
             row_tracks: f.rows.to_vec(),
+            column_auto: None,
             strokes_included: f.strokes_included,
             reverse_z: false,
             content_align: ContentAlign::Auto,

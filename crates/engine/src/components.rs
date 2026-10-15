@@ -54,6 +54,7 @@ pub const OVERRIDE_GROUPS: &[&str] = &[
     "padding",
     "gap",
     "alignment",
+    "gridAuto",
     "grids",
     "exports",
     "interactions",
@@ -370,11 +371,12 @@ pub(crate) fn copy_group(from: &Node, to: &mut Node, g: &str) {
             }
             to.styles.text = from.styles.text.clone();
         }
-        "padding" | "gap" | "alignment" => {
+        "padding" | "gap" | "alignment" | "gridAuto" => {
             if let (Some(a), Some(b)) = (&from.layout, &mut to.layout) {
                 match g {
                     "padding" => b.padding = a.padding,
                     "gap" => (b.gap, b.cross_gap) = (a.gap, a.cross_gap),
+                    "gridAuto" => b.column_auto = a.column_auto,
                     _ => (b.main_align, b.cross_align, b.content_align) = (a.main_align, a.cross_align, a.content_align),
                 }
             }
@@ -1006,6 +1008,9 @@ pub fn diff_groups(a: &Node, b: &Node) -> Vec<&'static str> {
         if x.main_align != y.main_align || x.cross_align != y.cross_align || x.content_align != y.content_align {
             out.push("alignment");
         }
+        if x.column_auto != y.column_auto {
+            out.push("gridAuto");
+        }
     }
     if a.grids != b.grids || a.styles.grid != b.styles.grid {
         out.push("grids");
@@ -1253,7 +1258,7 @@ fn full_rebuild() -> bool {
 /// values only (paint, text, visibility, size, position, …) that copies take as they are: carried to them without
 /// rebuilding the instances ([`patch_copies`]). `None` when anything else changed.
 fn patchable(doc: &Document, b: &Node, n: &Node) -> Option<Vec<&'static str>> {
-    const VALUES: [&str; 17] = [
+    const VALUES: [&str; 18] = [
         "fills",
         "strokes",
         "effects",
@@ -1266,6 +1271,7 @@ fn patchable(doc: &Document, b: &Node, n: &Node) -> Option<Vec<&'static str>> {
         "padding",
         "gap",
         "alignment",
+        "gridAuto",
         "grids",
         "exports",
         "interactions",
@@ -1664,7 +1670,8 @@ pub fn check_override_edit(before: &Document, after: &Document) -> Result<(), St
 }
 
 /// What about layer `id` an edit from `before` to `after` changed that only its main can: the
-/// auto layout of an instance or a layer in one but its padding, gap and alignment, or the
+/// auto layout of an instance or a layer in one but its padding, gap, alignment and responsive
+/// grid columns, or the
 /// position (rotation too), size, constraints or resizing of a layer inside an instance (the
 /// instance itself resizes, and its layers follow; text whose box follows its content still
 /// does). `None` when the edit is fine, also when the main changed the same way in this edit (a
@@ -1681,6 +1688,7 @@ pub fn refused_override(before: &Document, after: &Document, id: NodeId) -> Opti
         x.layout.clone().map(|mut l| {
             (l.gap, l.cross_gap, l.padding, l.main_align, l.cross_align) = (0.0, 0.0, [0.0; 4], MainAlign::Min, CrossAlign::Min);
             l.content_align = ContentAlign::Auto;
+            l.column_auto = None;
             l
         })
     };

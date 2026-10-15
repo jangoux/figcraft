@@ -18,7 +18,7 @@
 //! Children ignoring auto layout, and children of frames without it, nudge as usual (the caller
 //! handles those).
 
-use figcraft_doc::{AutoLayout, Document, LayoutMode, NodeId};
+use figcraft_doc::{Document, LayoutMode, NodeId};
 use figcraft_geom::Point;
 use figcraft_layout::{GridCell, flow_children, grid_place};
 
@@ -66,7 +66,7 @@ pub fn arrow_move(doc: &mut Document, parent: NodeId, selected: &[NodeId], dir: 
         return Ok(false);
     }
     let moved = match layout.mode {
-        LayoutMode::Grid => grid_move(doc, parent, &layout, &block, dir)?,
+        LayoutMode::Grid => grid_move(doc, parent, &block, dir)?,
         mode => {
             let along = (mode == LayoutMode::Horizontal) == dir.horizontal;
             if along {
@@ -154,14 +154,14 @@ fn covers(c: &GridCell, col: usize, row: usize) -> bool {
 
 /// An arrow in a grid: each selected child moves to the neighbouring cell. Returns whether anything
 /// moved (`false` at the grid's edge).
-fn grid_move(doc: &mut Document, parent: NodeId, layout: &AutoLayout, block: &[NodeId], dir: Dir) -> Result<bool> {
-    let cols = (layout.grid_columns as usize).max(1);
+fn grid_move(doc: &mut Document, parent: NodeId, block: &[NodeId], dir: Dir) -> Result<bool> {
+    let cols = (figcraft_layout::effective_columns(doc, parent) as usize).max(1);
     let mut moved = false;
     // The leading child first, so the ones behind it follow into the cells it frees.
     let order: Vec<NodeId> = if dir.forward { block.iter().rev().copied().collect() } else { block.to_vec() };
     for id in order {
         let flow = flow_children(doc, parent);
-        let (cells, rows) = grid_place(doc, layout, &flow);
+        let (cells, rows) = grid_place(doc, parent, &flow);
         let Some(cell) = cells.iter().find(|c| c.id == id).copied() else { continue };
         let (dc, dr): (isize, isize) = match (dir.horizontal, dir.forward) {
             (true, true) => (1, 0),

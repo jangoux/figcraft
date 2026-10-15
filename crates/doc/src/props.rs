@@ -1051,6 +1051,11 @@ pub struct AutoLayout {
     pub column_tracks: Vec<GridTrack>,
     /// Grid mode: row track sizes (missing tracks are `1fr`).
     pub row_tracks: Vec<GridTrack>,
+    /// Grid mode: responsive columns (`repeat(auto-fill | auto-fit, minmax(min, 1fr))`), counted
+    /// from the frame's width. While set it overrides `grid_columns` and `column_tracks` for the
+    /// layout; they stay stored, so clearing it restores them. A FigCraft extension.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub column_auto: Option<AutoColumns>,
     /// The frame's own inside strokes take up space in the layout (like padding).
     pub strokes_included: bool,
     /// Canvas stacking: the first child paints on top (default: the last one does).
@@ -1072,10 +1077,27 @@ impl Default for AutoLayout {
             grid_rows: 2,
             column_tracks: Vec::new(),
             row_tracks: Vec::new(),
+            column_auto: None,
             // New auto layout includes inside strokes.
             strokes_included: true,
             reverse_z: false,
         }
+    }
+}
+
+/// Responsive grid columns: as many `1fr` columns of at least `min` px as the frame's width holds
+/// (CSS `auto-fill`); `fit` also drops the columns the children leave empty, so they stretch (CSS
+/// `auto-fit`).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AutoColumns {
+    pub min: f64,
+    pub fit: bool,
+}
+
+impl Default for AutoColumns {
+    fn default() -> Self {
+        Self { min: 100.0, fit: false }
     }
 }
 
