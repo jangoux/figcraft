@@ -131,6 +131,7 @@ icons! {
     Hug,
     FillContainer,
     Fixed,
+    FixedPercent,
     PaddingH,
     PaddingV,
     Gap,
@@ -865,6 +866,14 @@ fn draw(p: &P, icon: Icon) {
             p.line(2.5, 4.0, 2.5, 11.0);
             p.line(13.5, 4.0, 13.5, 11.0);
             p.line(3.0, 7.5, 13.0, 7.5);
+        }
+        FixedPercent => {
+            // Fixed's end bars around a percent sign: two small rings and a slash.
+            p.line(1.5, 4.0, 1.5, 11.0);
+            p.line(14.5, 4.0, 14.5, 11.0);
+            p.circle(5.6, 5.4, 1.4);
+            p.circle(10.4, 9.6, 1.4);
+            p.line(10.5, 4.0, 5.5, 11.0);
         }
         PaddingH => {
             p.rect(2.5, 3.5, 13.5, 12.5, 1.0);

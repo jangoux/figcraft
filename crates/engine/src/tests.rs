@@ -324,6 +324,8 @@ fn every_command_survives_junk_params() {
         json!({"variations": {"wght": 1e308, "": "x", "slnt": null}, "props": {"fontVariations": [1], "variationSettings": {"wdth": "-1e9"}}, "text": 7, "cursor": -3}),
         json!({"style": 3, "props": {"listStyle": 5, "indentation": 1e308, "listSpacing": "NaN", "hangingList": "yes", "start": -5, "end": 1e12,
                "textDecorationThickness": {"unit": "pixels", "value": "x"}, "textDecorationOffset": -1e308, "textDecorationColor": [1]}}),
+        // Fixed % as junk.
+        json!({"id": 2, "props": {"widthPercent": "1e309%", "heightPercent": -1e308, "sizingH": "percent", "sizingV": "%%"}}),
         // Templates and the Getting started tips as junk.
         json!({"template": {"id": 1}, "name": [1e308], "show": "yes"}),
         // Links (dev resources) and indexes as junk.

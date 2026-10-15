@@ -876,10 +876,11 @@ fn keep_laid_out(doc: &Document, orig: &Node, o: &Node, n: &mut Node) {
     // Only layers whose shape is their box (a vector's points scale with it).
     let boxed = n.kind.is_frame_like() || matches!(n.kind, NodeKind::Text(_) | NodeKind::Rectangle | NodeKind::Ellipse { .. });
     let derived = |s: Sizing| boxed && ((s == Sizing::Hug && n.layout.is_some()) || (s == Sizing::Fill && flows));
-    if derived(n.child_layout.sizing_h) {
+    // Fixed % follows the copy's own parent, like Fill.
+    if derived(n.child_layout.sizing_h) || (boxed && n.child_layout.percent_w.is_some()) {
         n.width = o.width;
     }
-    if derived(n.child_layout.sizing_v) {
+    if derived(n.child_layout.sizing_v) || (boxed && n.child_layout.percent_h.is_some()) {
         n.height = o.height;
     }
 }

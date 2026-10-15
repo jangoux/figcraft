@@ -18,7 +18,8 @@ strokeCap / startCap / endCap, strokeJoin, miterAngle (degrees: sharper joins be
 clip, isMask, layout (null|horizontal|vertical|grid|{...}), gap, crossGap, padding (n or [t,r,b,l]), paddingTop/Right/Bottom/Left, \
 mainAlign (min|center|max, or the auto gaps spaceBetween|spaceAround|spaceEvenly), crossAlign (min|center|max|baseline: first text baselines, horizontal layouts), contentAlign (wrapped lines: auto = packed where crossAlign says | spaceBetween), wrap (rows of a horizontal layout, columns of a vertical one), strokesIncluded (the frame's inside stroke takes up space), reverseZ (canvas stacking: true = first on top), \
 columnGap / rowGap (aliases of gap / crossGap), gridColumns, gridRows, columnTracks / rowTracks ([120 | \"1fr\" | \"auto\" | {sizing, value}]), \
-gridColumn / gridRow (0-based cell anchor, null = auto), gridColumnSpan, gridRowSpan, gridAlignH / gridAlignV (a grid child's alignment in its cell: min|center|max, auto/null = the frame's), sizingH / sizingV (fixed|hug|fill), \
+gridColumn / gridRow (0-based cell anchor, null = auto), gridColumnSpan, gridRowSpan, gridAlignH / gridAlignV (a grid child's alignment in its cell: min|center|max, auto/null = the frame's), sizingH / sizingV (fixed|hug|fill|percent: Fixed % at the current size), \
+widthPercent / heightPercent (Fixed %, a FigCraft extension: the size as a percentage of the parent frame's, its inner size in an auto layout flow; 50 or \"50%\"; null keeps the size fixed in px), \
 absolute (ignore auto layout; follows constraints), minWidth, maxWidth, minHeight, maxHeight (null removes), constraints {horizontal, vertical}, grids, exports, characters, fontFamily, fontStyle, \
 fontSize, lineHeight (auto|px|\"150%\"), letterSpacing (px|\"2%\"), textAlign (left|center|right|justified), textAlignVertical, textAutoResize \
 (widthAndHeight|height|none|truncate), textDecoration, textDecorationStyle (solid|dotted|wavy), textDecorationThickness / textDecorationOffset \
@@ -497,13 +498,26 @@ pub fn apply(cmd: &str, doc: &mut Document, id: NodeId, props: &Map<String, Valu
             }
             "strokesIncluded" => ensure_layout(doc.get_mut(id)?).strokes_included = v.as_bool().unwrap_or(false),
             "reverseZ" => ensure_layout(doc.get_mut(id)?).reverse_z = v.as_bool().unwrap_or(false),
-            "sizingH" | "layoutSizingHorizontal" => {
-                let s = sizing(v).ok_or_else(|| bad(cmd, "sizing: fixed|hug|fill"))?;
-                set_sizing(cmd, doc, id, s, true)?;
+            "sizingH" | "layoutSizingHorizontal" | "sizingV" | "layoutSizingVertical" => {
+                let horizontal = k.contains('H');
+                if is_percent_sizing(v) {
+                    // Fixed % at the size the layer has now.
+                    let n = doc.get(id)?;
+                    let (size, of) = (if horizontal { n.width } else { n.height }, doc.percent_basis(id).unwrap_or((0.0, 0.0)));
+                    let of = if horizontal { of.0 } else { of.1 };
+                    let p = if of > 1e-9 { size / of * 100.0 } else { 100.0 };
+                    set_percent(cmd, doc, id, horizontal, Some(p))?;
+                } else {
+                    let s = sizing(v).ok_or_else(|| bad(cmd, "sizing: fixed|hug|fill|percent"))?;
+                    set_sizing(cmd, doc, id, s, horizontal)?;
+                }
             }
-            "sizingV" | "layoutSizingVertical" => {
-                let s = sizing(v).ok_or_else(|| bad(cmd, "sizing: fixed|hug|fill"))?;
-                set_sizing(cmd, doc, id, s, false)?;
+            "widthPercent" | "heightPercent" => {
+                let p = match v {
+                    Value::Null => None,
+                    other => Some(percent_of(other).ok_or_else(|| bad(cmd, format!("`{k}` must be a percentage (50 or \"50%\") or null")))?),
+                };
+                set_percent(cmd, doc, id, k.starts_with('w'), p)?;
             }
             "absolute" | "ignoreAutoLayout" => {
                 let on = bool_of(v).ok_or_else(|| bad(cmd, "`absolute` must be a boolean"))?;
@@ -805,7 +819,7 @@ pub fn override_group(k: &str) -> &'static str {
         "features" | "fontFeatures" | "openTypeFeatures" | "listStyle" | "indentation" | "listSpacing" | "maxLines" | "variationSettings"
         | "hangingPunctuation" | "hangingList" => "textStyle",
         "cornerRadius" | "cornerSmoothing" | "topLeftRadius" | "topRightRadius" | "bottomRightRadius" | "bottomLeftRadius" => "corners",
-        "width" | "height" | "w" | "h" | "sizingH" | "sizingV" => "size",
+        "width" | "height" | "w" | "h" | "sizingH" | "sizingV" | "widthPercent" | "heightPercent" => "size",
         "gap" | "itemSpacing" | "columnGap" | "crossGap" | "counterAxisSpacing" | "rowGap" => "gap",
         "padding" | "paddingTop" | "paddingRight" | "paddingBottom" | "paddingLeft" | "paddingHorizontal" | "paddingVertical" => "padding",
         "mainAlign" | "primaryAxisAlignItems" | "crossAlign" | "counterAxisAlignItems" | "contentAlign" | "counterAxisAlignContent" => "alignment",
@@ -990,6 +1004,49 @@ pub fn weight_name(w: u16) -> &'static str {
     }
 }
 
+/// Whether a sizing value asks for Fixed % (`percent`, `fixed %`, `fixedPercent`).
+fn is_percent_sizing(v: &Value) -> bool {
+    v.as_str().is_some_and(|s| {
+        let s: String = s.chars().filter(|c| !c.is_whitespace() && *c != '_' && *c != '-').collect::<String>().to_ascii_lowercase();
+        matches!(s.as_str(), "percent" | "fixed%" | "fixedpercent" | "%")
+    })
+}
+
+/// A percentage: a number, or a string like `"50%"`.
+fn percent_of(v: &Value) -> Option<f64> {
+    let p = match v {
+        Value::String(s) => s.trim().trim_end_matches('%').trim().parse::<f64>().ok()?,
+        other => f64_of(other)?,
+    };
+    figcraft_doc::clean_percent(p)
+}
+
+/// Fixed % on one axis (`None`: back to a size fixed in px). The axis becomes Fixed; an auto
+/// layout parent that hugs it becomes fixed there, like Fill (it has no size of its own to share).
+fn set_percent(cmd: &str, doc: &mut Document, id: NodeId, horizontal: bool, p: Option<f64>) -> Result<()> {
+    if let Some(p) = p.and_then(figcraft_doc::clean_percent) {
+        if doc.percent_basis(id).is_none() {
+            return Err(bad(cmd, "Fixed % needs a parent frame"));
+        }
+        set_sizing(cmd, doc, id, Sizing::Fixed, horizontal)?;
+        let n = doc.get(id)?;
+        let flow_parent = n.parent.filter(|_| !n.child_layout.absolute).filter(|p| doc.node(*p).is_some_and(|p| p.layout.is_some()));
+        if let Some(parent) = flow_parent {
+            let cl = &mut doc.get_mut(parent)?.child_layout;
+            let ps = if horizontal { &mut cl.sizing_h } else { &mut cl.sizing_v };
+            if *ps == Sizing::Hug {
+                *ps = Sizing::Fixed;
+            }
+        }
+        let cl = &mut doc.get_mut(id)?.child_layout;
+        *(if horizontal { &mut cl.percent_w } else { &mut cl.percent_h }) = Some(p);
+    } else {
+        let cl = &mut doc.get_mut(id)?.child_layout;
+        *(if horizontal { &mut cl.percent_w } else { &mut cl.percent_h }) = None;
+    }
+    Ok(())
+}
+
 fn set_sizing(cmd: &str, doc: &mut Document, id: NodeId, s: Sizing, horizontal: bool) -> Result<()> {
     let parent = doc.get(id)?.parent.filter(|p| doc.node(*p).is_some_and(|p| p.layout.is_some()));
     match s {
@@ -1015,10 +1072,13 @@ fn set_sizing(cmd: &str, doc: &mut Document, id: NodeId, s: Sizing, horizontal: 
     // other axis keeps its meaning: an auto-width text set to fill its width wraps (auto height).
     figcraft_layout::coherent_sizing(doc, id);
     let n = doc.get_mut(id)?;
+    // Any sizing picked here is in px or follows content: no percentage any more.
     if horizontal {
         n.child_layout.sizing_h = s;
+        n.child_layout.percent_w = None;
     } else {
         n.child_layout.sizing_v = s;
+        n.child_layout.percent_h = None;
     }
     if let NodeKind::Text(t) = &mut n.kind {
         t.auto_resize = match (n.child_layout.sizing_h, n.child_layout.sizing_v) {

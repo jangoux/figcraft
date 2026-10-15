@@ -1198,6 +1198,12 @@ pub fn normalize(doc: &mut Document, before: &Document) {
         figcraft_layout::coherent_sizing(doc, id);
     }
     touched.extend(doc.take_dirty());
+    // 0c. Fixed %: a layer the edit resized itself (a drag, a typed width) keeps its new size as its
+    // share of the parent; the others take their share (auto layout children in step 4).
+    for id in live(doc, &touched) {
+        settle_percent(doc, before, id, &m);
+    }
+    touched.extend(doc.take_dirty());
     // 1. Text auto-size.
     for id in live(doc, &touched) {
         let Some(n) = doc.node(id) else { continue };
@@ -1284,6 +1290,33 @@ pub fn normalize(doc: &mut Document, before: &Document) {
     doc.take_dirty();
     // 5. Comment pins follow their layers to other pages and stay put when the layers are deleted.
     cmd::comment::follow_anchors(doc, before);
+}
+
+/// Fixed % after an edit: where layer `id` changed size while its percentage and what it is of
+/// stayed as they were, the new size becomes the percentage; then the layer takes its share where
+/// no auto layout places it.
+fn settle_percent(doc: &mut Document, before: &Document, id: NodeId, m: &dyn figcraft_layout::Measure) {
+    let Some(n) = doc.node(id) else { return };
+    let cl = &n.child_layout;
+    if cl.percent_w.is_none() && cl.percent_h.is_none() {
+        return;
+    }
+    let Some(basis) = doc.percent_basis(id) else { return };
+    if let Some(b) = before.node(id).filter(|b| b.parent == n.parent && before.percent_basis(id) == Some(basis)) {
+        let share = |p: Option<f64>, was: Option<f64>, size: f64, old: f64, of: f64| match p {
+            Some(_) if p == was && (size - old).abs() > 1e-6 && of > 1e-9 => figcraft_doc::clean_percent(size / of * 100.0),
+            _ => p,
+        };
+        let pw = share(cl.percent_w, b.child_layout.percent_w, n.width, b.width, basis.0);
+        let ph = share(cl.percent_h, b.child_layout.percent_h, n.height, b.height, basis.1);
+        if (pw, ph) != (cl.percent_w, cl.percent_h)
+            && let Some(n) = doc.node_mut(id)
+        {
+            n.child_layout.percent_w = pw;
+            n.child_layout.percent_h = ph;
+        }
+    }
+    figcraft_layout::apply_percent(doc, id, m);
 }
 
 /// Whether layer `id` changed (since `before`) in a way that can move or resize layers in an auto
@@ -1516,6 +1549,8 @@ mod paint_tests;
 mod panels_behaviour_tests;
 #[cfg(test)]
 mod pdf_print_tests;
+#[cfg(test)]
+mod percent_tests;
 #[cfg(test)]
 mod pixel_preview_tests;
 #[cfg(test)]

@@ -91,7 +91,14 @@ pub fn node_json(doc: &Document, id: NodeId, depth: usize) -> Value {
         if cl.absolute {
             o.insert("absolute".into(), json!(true));
         }
-        for (k, v) in [("minWidth", cl.min_w), ("maxWidth", cl.max_w), ("minHeight", cl.min_h), ("maxHeight", cl.max_h)] {
+        for (k, v) in [
+            ("widthPercent", cl.percent_w),
+            ("heightPercent", cl.percent_h),
+            ("minWidth", cl.min_w),
+            ("maxWidth", cl.max_w),
+            ("minHeight", cl.min_h),
+            ("maxHeight", cl.max_h),
+        ] {
             if let Some(v) = v {
                 o.insert(k.into(), json!(v));
             }
