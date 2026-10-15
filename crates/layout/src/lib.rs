@@ -18,9 +18,7 @@
 
 use figcraft_doc::{
     AutoColumns, AutoLayout, CellAlign, ContentAlign, CrossAlign, Document, GridAlign, GridKind, HConstraint, LayoutGrid, LayoutMode, MainAlign,
-    NodeId, NodeKind, Sizing, StrokeAlign, TextAutoResize, VConstraint,
-    AutoLayout, CellAlign, ContentAlign, CrossAlign, Document, GridAlign, GridKind, HConstraint, LayoutGrid, LayoutMode, MainAlign, NodeId, NodeKind,
-    Sizing, TextAutoResize, VConstraint,
+    NodeId, NodeKind, Sizing, TextAutoResize, VConstraint,
 };
 use figcraft_geom::{Affine, Point, Rect};
 

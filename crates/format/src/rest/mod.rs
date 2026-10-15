@@ -201,6 +201,9 @@ fn heal_margin_wrappers(doc: &mut Document) {
         if let Some(n) = doc.node_mut(id) {
             n.margin_wrapper = true;
         }
+    }
+}
+
 /// Keep a Fixed % read from plugin data only where the size still is that share of the parent: a
 /// layer resized in another app (which kept the plugin data but not the meaning) stays in px.
 fn settle_percent_sizes(doc: &mut Document) {
@@ -623,6 +626,7 @@ impl<'a> Ctx<'a> {
             && j.pointer("/pluginData/figcraft/margin").and_then(Value::as_str).is_some_and(|v| !matches!(v.trim(), "" | "0" | "false"))
         {
             n.margin_wrapper = true;
+        }
         // Fixed % written by FigCraft (plugin data `figcraft` / `percentSize`: `{"w": .., "h": ..}`),
         // checked against the sizes once the document is built ([`settle_percent_sizes`]).
         if let Some(v) = j.pointer("/pluginData/figcraft/percentSize").and_then(Value::as_str).and_then(|s| serde_json::from_str::<Value>(s).ok()) {

@@ -906,7 +906,6 @@ impl<'d> Exporter<'d> {
             self.warn("strokes wider on one side of their path were written as filled outlines (the stroke itself is kept for FigCraft)");
             let children = self.layer(&outline, parent, f, nested);
             stash(f, STASH.1, &original);
-            push_plugin_data(f, STASH, &original);
             return children;
         }
         let main = match &n.kind {
@@ -2222,7 +2221,9 @@ pub(super) const MAX_GRID_AUTO_STASH: usize = 256;
 /// Keep `value` for FigCraft under `key` in a layer's plugin data: every FigCraft-only setting a
 /// layer keeps goes in one `pluginData` list (the format's other readers ignore it).
 pub(super) fn stash(f: &mut Fields, key: &'static str, value: &str) {
-    let entry = o(vec![("pluginID", s(STASH.0)), ("value", s(value)), ("key", s(key))]);
+    push_plugin_data(f, (STASH.0, key), value);
+}
+
 /// The plugin id and key under which a Fixed % layer keeps its percentages (`{"w": .., "h": ..}`).
 pub(super) const PERCENT: (&str, &str) = ("figcraft", "percentSize");
 

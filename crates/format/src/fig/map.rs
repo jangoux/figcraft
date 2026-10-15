@@ -517,18 +517,23 @@ impl<'a> Mapper<'a> {
             o.insert("styles".into(), Value::Object(styles));
         }
         stroke(o, v);
-        // A margin wrapper's flag, as the REST API gives plugin data (`{pluginId: {key: value}}`).
-        let (pid, key) = super::export::MARGIN;
-        // Fixed % percentages, as the REST API gives plugin data (`{pluginId: {key: value}}`).
-        let (pid, key) = super::export::PERCENT;
-        if let Some(value) = v
-            .list("pluginData")
-            .iter()
-            .find(|p| p.get("pluginID").and_then(Kv::str) == Some(pid) && p.get("key").and_then(Kv::str) == Some(key))
-            .and_then(|p| p.get("value"))
-            .and_then(Kv::str)
-        {
-            o.insert("pluginData".into(), json!({pid: {key: value}}));
+        // A margin wrapper's flag and Fixed % percentages, as the REST API gives plugin data
+        // (`{pluginId: {key: value}}`).
+        let mut plugin = serde_json::Map::new();
+        for (pid, key) in [super::export::MARGIN, super::export::PERCENT] {
+            if let Some(value) = v
+                .list("pluginData")
+                .iter()
+                .find(|p| p.get("pluginID").and_then(Kv::str) == Some(pid) && p.get("key").and_then(Kv::str) == Some(key))
+                .and_then(|p| p.get("value"))
+                .and_then(Kv::str)
+                && let Value::Object(keys) = plugin.entry(pid).or_insert_with(|| json!({}))
+            {
+                keys.insert(key.into(), json!(value));
+            }
+        }
+        if !plugin.is_empty() {
+            o.insert("pluginData".into(), Value::Object(plugin));
         }
         copy_num(o, v, "cornerRadius", "cornerRadius");
         copy_num(o, v, "cornerSmoothing", "cornerSmoothing");
