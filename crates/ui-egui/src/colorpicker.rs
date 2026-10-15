@@ -414,7 +414,11 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
     let pos = beside.unwrap_or(pos2(screen.max.x - app.ui.right_width - 260.0, 140.0));
     let mut open = true;
     let mut close_now = false;
+    // A popover: above the window it was opened from (clicking the variables editor raises that
+    // window, and the picker would reopen under it).
+    ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, Id::new("color_picker")));
     egui::Window::new("color_picker")
+        .id(Id::new("color_picker"))
         .title_bar(false)
         .fixed_pos(pos)
         .fixed_size(vec2(240.0, 0.0))
@@ -1094,3 +1098,7 @@ impl WithStops for Gradient {
         self
     }
 }
+
+#[cfg(test)]
+#[path = "colorpicker_tests.rs"]
+mod tests;
